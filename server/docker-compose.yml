@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  mul-email-server:
+    build: .
+    container_name: mul-email-server
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=3001
+      - JWT_SECRET=${JWT_SECRET:-mul-email-system-jwt-secret-2026}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123456}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@system.local}
+      - DATA_DIR=/app/data
+      - MAIL_POLL_INTERVAL=${MAIL_POLL_INTERVAL:-60000}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      - PROXY_TEST_TIMEOUT=${PROXY_TEST_TIMEOUT:-10000}
+      - IMAP_CONNECT_TIMEOUT=${IMAP_CONNECT_TIMEOUT:-30000}
+    networks:
+      - mul-email-net
+
+  # 可选: 前端服务 (如果需要一起部署)
+  # mul-email-front:
+  #   build: ../front
+  #   container_name: mul-email-front
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - mul-email-server
+  #   networks:
+  #     - mul-email-net
+
+networks:
+  mul-email-net:
+    driver: bridge

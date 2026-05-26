@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  mul-email-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mul-email-backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      # 数据持久化 - NAS 挂载点
+      - ./data:/app/data
+    environment:
+      # 应用配置
+      - PORT=3001
+      - HOST=0.0.0.0
+      
+      # JWT 配置 - 生产环境请修改为强密钥
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      
+      # 默认管理员账号 - 生产环境请修改
+      - DEFAULT_ADMIN_USER=${DEFAULT_ADMIN_USER:-admin}
+      - DEFAULT_ADMIN_PASS=${DEFAULT_ADMIN_PASS:-admin123}
+      
+      # 数据目录
+      - DATA_DIR=/app/data
+      
+      # 日志级别
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      
+      # CORS 配置（可选）
+      # - CORS_ORIGIN=https://your-domain.com
+    networks:
+      - mul-email-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  mul-email-net:
+    driver: bridge

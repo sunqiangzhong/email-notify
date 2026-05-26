@@ -1,0 +1,28 @@
+{
+  "name": "mul-email-server",
+  "version": "1.0.0",
+  "description": "多邮箱聚合与微信通知管理系统 - 后端服务",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "lowdb": "^5.1.0",
+    "imap-simple": "^5.1.0",
+    "mailparser": "^3.7.1",
+    "socks-proxy-agent": "^8.0.5",
+    "https-proxy-agent": "^7.0.6",
+    "axios": "^1.7.9",
+    "uuid": "^11.0.5",
+    "tcp-ping": "^0.1.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

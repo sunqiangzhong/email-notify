@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "system-ui", "-apple-system", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", monospace;
+  --font-display: "Space Grotesk", sans-serif;
+  
+  --color-bg-app: #0A0A0B;
+  --color-bg-sidebar: #0D1117;
+  --color-bg-card: rgba(22, 27, 34, 0.75);
+  --color-bg-card-hover: rgba(31, 38, 48, 0.8);
+  --color-border-card: #30363D;
+  --color-text-primary: #E6EDF3;
+  --color-text-secondary: #C9D1D9;
+  --color-accent-blue: #58A6FF;
+  --color-accent-blue-hover: #1F6FEB;
+  --color-accent-green: #3FB950;
+  --color-accent-yellow: #D29922;
+  --color-accent-red: #F85149;
+}
+
+body {
+  background-color: var(--color-bg-app);
+  color: var(--color-text-secondary);
+}
+
+/* Custom subtle scrollbar styling */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #30363D;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #58A6FF;
+}
+
+/* Custom animation classes for micro-interactions */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+

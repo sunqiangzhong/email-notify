@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  # 后端 API 服务
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: mul-email-server
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - JWT_SECRET=${JWT_SECRET:-mul-em...v"}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123456}
+      - DATA_DIR=/app/data
+      - MAIL_POLL_INTERVAL=60000
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+    volumes:
+      - ./server/data:/app/data
+    networks:
+      - mul-email-net
+
+  # 前端 Vite 开发服务器 (开发模式)
+  frontend-dev:
+    build:
+      context: ./front
+      dockerfile: Dockerfile
+    container_name: mul-email-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:3001
+    depends_on:
+      - server
+    networks:
+      - mul-email-net
+
+  # Nginx 反向代理 (生产模式)
+  nginx:
+    image: nginx:alpine
+    container_name: mul-email-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./front/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - server
+    networks:
+      - mul-email-net
+
+networks:
+  mul-email-net:
+    driver: bridge

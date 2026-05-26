@@ -1,0 +1,6 @@
+{
+  "name": "Multi-Email WeChat Aggregator",
+  "description": "多邮箱聚合与微信通知管理系统前端界面，支持邮件流监控、邮箱账户配置、网络代理设置及微信通知过滤推送。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
