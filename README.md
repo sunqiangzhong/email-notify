@@ -33,8 +33,8 @@
    ```
 
 4. **访问系统**
-   - 打开浏览器访问: `http://localhost:3000`
-   - 默认管理员: `admin / admin123`
+   - 打开浏览器访问: `http://your-nas-ip:6000`
+   - 默认管理员: `admin / admin123456`
 
 ### 本地开发
 
@@ -53,8 +53,8 @@
    ```
 
 3. **访问系统**
-   - 前端: `http://localhost:5173`
-   - 后端: `http://localhost:3001`
+   - 前端: `http://127.0.0.1:5173`
+   - 后端: `http://127.0.0.1:3001`
 
 ## 📁 项目结构
 
@@ -99,10 +99,10 @@ mul-email/
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `APP_PORT` | 应用访问端口 | `3000` |
+| `APP_PORT` | 应用访问端口 | `6000` |
 | `JWT_SECRET` | JWT 加密密钥 | - |
 | `ADMIN_USERNAME` | 管理员用户名 | `admin` |
-| `ADMIN_PASSWORD` | 管理员密码 | `admin123` |
+| `ADMIN_PASSWORD` | 管理员密码 | `admin123456` |
 | `TZ` | 时区 | `Asia/Shanghai` |
 
 ## 📝 API 接口

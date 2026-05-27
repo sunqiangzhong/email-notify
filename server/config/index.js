@@ -12,7 +12,7 @@ module.exports = {
   },
   dataDir: path.resolve(__dirname, '..', process.env.DATA_DIR || './data'),
   mailPollInterval: parseInt(process.env.MAIL_POLL_INTERVAL || '60000', 10),
-  corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:5173').split(',').map(s => s.trim()),
+  corsOrigins: (process.env.CORS_ORIGINS || '*').split(',').map(s => s.trim()),
   proxyTestTimeout: parseInt(process.env.PROXY_TEST_TIMEOUT || '10000', 10),
   imapConnectTimeout: parseInt(process.env.IMAP_CONNECT_TIMEOUT || '30000', 10),
 };

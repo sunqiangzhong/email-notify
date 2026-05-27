@@ -29,7 +29,7 @@ BACKEND_PID=$!
 # 等待后端启动
 echo "[INIT] 等待后端服务就绪..."
 for i in $(seq 1 30); do
-    if wget --no-verbose --tries=1 --spider http://localhost:$PORT/api/health 2>/dev/null; then
+    if wget --no-verbose --tries=1 --spider http://127.0.0.1:$PORT/api/health 2>/dev/null; then
         echo "[INIT] 后端服务已就绪"
         break
     fi
@@ -47,8 +47,8 @@ NGINX_PID=$!
 
 echo "=========================================="
 echo "系统已启动"
-echo "前端访问: http://localhost:80"
-echo "后端API:  http://localhost:$PORT"
+echo "前端访问: http://127.0.0.1:80"
+echo "后端API:  http://127.0.0.1:$PORT"
 echo "=========================================="
 
 # 捕获退出信号

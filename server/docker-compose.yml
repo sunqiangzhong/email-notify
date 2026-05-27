@@ -17,7 +17,7 @@ services:
       - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@system.local}
       - DATA_DIR=/app/data
       - MAIL_POLL_INTERVAL=${MAIL_POLL_INTERVAL:-60000}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - PROXY_TEST_TIMEOUT=${PROXY_TEST_TIMEOUT:-10000}
       - IMAP_CONNECT_TIMEOUT=${IMAP_CONNECT_TIMEOUT:-30000}
     networks:

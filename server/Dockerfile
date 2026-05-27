@@ -19,7 +19,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --production
 
 # 复制源代码
-COPY . .
+COPY . ./
 
 # 创建数据目录
 RUN mkdir -p /app/data
@@ -29,7 +29,7 @@ EXPOSE 3001
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/api/health || exit 1
 
 # 启动
 CMD ["node", "server.js"]
