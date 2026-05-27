@@ -9,9 +9,9 @@ const errorHandler = require('./middlewares/errorHandler');
 
 // Route imports
 const authRoutes = require('./routes/auth');
-const accountsRoutes = require('./routes/accounts');
-const proxyRoutes = require('./routes/proxy');
-const wechatRoutes = require('./routes/wechat');
+const emailsRoutes = require('./routes/emails');
+const proxiesRoutes = require('./routes/proxies');
+const notificationsRoutes = require('./routes/notifications');
 const logsRoutes = require('./routes/logs');
 const systemRoutes = require('./routes/system');
 const adminRoutes = require('./routes/admin');
@@ -39,9 +39,9 @@ app.use((req, _res, next) => {
 // Routes
 // ──────────────────────────────────────────
 app.use('/api/auth', authRoutes);
-app.use('/api/accounts', accountsRoutes);
-app.use('/api/proxy', proxyRoutes);
-app.use('/api/wechat', wechatRoutes);
+app.use('/api/emails', emailsRoutes);
+app.use('/api/proxies', proxiesRoutes);
+app.use('/api/notifications', notificationsRoutes);
 app.use('/api/logs', logsRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/admin', adminRoutes);

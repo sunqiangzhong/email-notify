@@ -3,7 +3,7 @@
  * 封装所有与后端的通信
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000/api';
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 // 获取存储的 token
 const getToken = (): string | null => {
@@ -281,9 +281,33 @@ export interface NotificationData {
   id: string;
   userId: string;
   name: string;
-  type: 'serverchan' | 'wecom' | 'custom';
-  webhookUrl: string;
-  secret: string | null;
+  type: 'wecom_app' | 'wecom_webhook' | 'server_chan' | 'telegram' | 'dingtalk' | 'feishu' | 'custom_webhook';
+  config: {
+    // 企业微信应用
+    corpId?: string;
+    agentId?: string;
+    appSecret?: string;
+    proxyUrl?: string;
+    token?: string;
+    encodingAesKey?: string;
+    adminUsers?: string;
+    // 企业微信群机器人
+    webhookUrl?: string;
+    mentionedList?: string;
+    // Server酱
+    sendKey?: string;
+    channel?: string;
+    // Telegram
+    botToken?: string;
+    chatId?: string;
+    apiProxy?: string;
+    // 钉钉/飞书
+    secret?: string;
+    // 自定义 Webhook
+    method?: string;
+    headers?: string;
+    bodyTemplate?: string;
+  };
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -335,6 +359,11 @@ export const notificationApi = {
     return request<{ success: boolean; message: string }>(`/notifications/${id}/test`, {
       method: 'POST',
     });
+  },
+
+  // 获取通知类型配置（包含所有支持的通知渠道及其配置项）
+  getTypes: async () => {
+    return request<{ success: boolean; data: Record<string, { name: string; description: string; fields: Array<{ key: string; label: string; required: boolean; hint: string; default?: string }> }> }>('/notifications/types');
   },
 
   // 过滤规则

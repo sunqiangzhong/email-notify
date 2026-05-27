@@ -2,9 +2,10 @@
  * 邮件服务 - 核心引擎
  * 
  * 职责:
- *   1. 为每个激活的邮箱建立 IMAP 连接 (IDLE 模式 / 定时轮询)
+ *   1. 为每个激活的邮箱建立 IMAP 连接 (定时轮询)
  *   2. 捕获新邮件，触发通知流程
  *   3. 管理连接池生命周期
+ *   4. 提供邮件拉取和正文获取功能
  */
 const imaps = require('imap-simple');
 const { simpleParser } = require('mailparser');
@@ -47,9 +48,12 @@ function buildImapConfig(account, proxyConfig) {
 /**
  * 获取邮箱的代理配置
  */
-function getProxyForUser(userId) {
+function getProxyForAccount(account) {
   const db = getDB();
-  return db.data.proxies.find(p => p.userId === userId) || null;
+  if (account.useProxy && account.proxyId) {
+    return db.data.proxies.find(p => p.id === account.proxyId) || null;
+  }
+  return db.data.proxies.find(p => p.userId === account.userId) || null;
 }
 
 /**
@@ -57,7 +61,7 @@ function getProxyForUser(userId) {
  */
 async function connectAndPoll(account) {
   const db = getDB();
-  const proxyConfig = getProxyForUser(account.userId);
+  const proxyConfig = getProxyForAccount(account);
 
   try {
     console.log(`[MAIL] Connecting to ${account.email} (${account.imapHost})...`);
@@ -69,7 +73,7 @@ async function connectAndPoll(account) {
     const dbAccount = db.data.accounts.find(a => a.id === account.id);
     if (dbAccount) {
       dbAccount.status = 'online';
-      dbAccount.lastChecked = new Date().toISOString();
+      dbAccount.lastSync = new Date().toISOString();
       await db.write();
     }
 
@@ -146,10 +150,10 @@ async function connectAndPoll(account) {
           processNotification(account.userId, emailData, logEntry.id);
         }
 
-        // 更新 lastChecked
+        // 更新 lastSync
         const dbAccount = db.data.accounts.find(a => a.id === account.id);
         if (dbAccount) {
-          dbAccount.lastChecked = new Date().toISOString();
+          dbAccount.lastSync = new Date().toISOString();
           await db.write();
         }
       } catch (pollErr) {
@@ -180,7 +184,7 @@ async function connectAndPoll(account) {
       const dbAccount = db.data.accounts.find(a => a.id === account.id);
       if (dbAccount) {
         dbAccount.status = 'error';
-        db.write();
+        db.write().catch(() => {});
       }
     });
 
@@ -205,7 +209,7 @@ async function connectAndPoll(account) {
  */
 async function startAll() {
   const db = getDB();
-  const activeAccounts = db.data.accounts.filter(a => a.enabled !== false);
+  const activeAccounts = db.data.accounts.filter(a => a.active !== false);
 
   console.log(`[MAIL] Starting ${activeAccounts.length} email connections...`);
 
@@ -265,8 +269,136 @@ async function restartAccount(accountId) {
 
   const db = getDB();
   const account = db.data.accounts.find(a => a.id === accountId);
-  if (account && account.enabled !== false) {
+  if (account && account.active !== false) {
     await connectAndPoll(account);
+  }
+}
+
+/**
+ * 拉取最近邮件（分页）
+ * @param {object} account - 邮箱账户对象
+ * @param {number} page - 页码（从1开始）
+ * @param {number} pageSize - 每页数量
+ * @returns {Promise<{emails: Array, pagination: object}>}
+ */
+async function fetchRecent(account, page = 1, pageSize = 10) {
+  const proxyConfig = getProxyForAccount(account);
+
+  try {
+    const imapConfig = buildImapConfig(account, proxyConfig);
+    const connection = await imaps.connect(imapConfig);
+    await connection.openBox('INBOX');
+
+    // 搜索所有邮件
+    const searchCriteria = ['ALL'];
+    const fetchOptions = {
+      bodies: ['HEADER'],
+      markSeen: false,
+      struct: false,
+    };
+
+    const messages = await connection.search(searchCriteria, fetchOptions);
+    connection.end();
+
+    // 按 UID 降序排序（最新的在前）
+    messages.sort((a, b) => b.attributes.uid - a.attributes.uid);
+
+    // 计算分页
+    const total = messages.length;
+    const totalPages = Math.ceil(total / pageSize);
+    const startIndex = (page - 1) * pageSize;
+    const endIndex = Math.min(startIndex + pageSize, total);
+    const pageMessages = messages.slice(startIndex, endIndex);
+
+    // 解析邮件头
+    const emails = [];
+    for (const msg of pageMessages) {
+      try {
+        const headerPart = msg.parts.find(p => p.which === 'HEADER');
+        if (!headerPart) continue;
+
+        const parsed = await simpleParser(headerPart.body);
+
+        emails.push({
+          uid: msg.attributes.uid,
+          id: `${account.id}_${msg.attributes.uid}`,
+          fromName: parsed.from?.value?.[0]?.name || '',
+          fromAddress: parsed.from?.value?.[0]?.address || '',
+          to: parsed.to?.value?.[0]?.address || account.email,
+          subject: parsed.subject || '(无主题)',
+          snippet: '',
+          date: parsed.date?.toISOString() || new Date().toISOString(),
+          hasAttachments: false,
+          attachmentsCount: 0,
+        });
+      } catch (parseErr) {
+        console.error('[MAIL] Parse header error:', parseErr.message);
+      }
+    }
+
+    return {
+      emails,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages,
+      },
+    };
+  } catch (err) {
+    console.error(`[MAIL] fetchRecent error for ${account.email}:`, err.message);
+    throw err;
+  }
+}
+
+/**
+ * 获取单封邮件正文
+ * @param {object} account - 邮箱账户对象
+ * @param {number} uid - 邮件 UID
+ * @returns {Promise<{text: string, html: string}>}
+ */
+async function fetchBody(account, uid) {
+  const proxyConfig = getProxyForAccount(account);
+
+  try {
+    const imapConfig = buildImapConfig(account, proxyConfig);
+    const connection = await imaps.connect(imapConfig);
+    await connection.openBox('INBOX');
+
+    // 搜索指定 UID 的邮件
+    const searchCriteria = [['UID', `${uid}:${uid}`]];
+    const fetchOptions = {
+      bodies: [''],
+      markSeen: false,
+      struct: true,
+    };
+
+    const messages = await connection.search(searchCriteria, fetchOptions);
+    connection.end();
+
+    if (messages.length === 0) {
+      throw new Error('邮件不存在');
+    }
+
+    const msg = messages[0];
+    const allPart = msg.parts.find(p => p.which === '');
+    if (!allPart) {
+      throw new Error('无法获取邮件内容');
+    }
+
+    const parsed = await simpleParser(allPart.body);
+
+    return {
+      text: parsed.text || '',
+      html: parsed.html || '',
+      subject: parsed.subject || '',
+      from: parsed.from?.text || '',
+      to: parsed.to?.text || '',
+      date: parsed.date?.toISOString() || '',
+    };
+  } catch (err) {
+    console.error(`[MAIL] fetchBody error for ${account.email} UID ${uid}:`, err.message);
+    throw err;
   }
 }
 
@@ -289,5 +421,7 @@ module.exports = {
   stopAll,
   testConnection,
   restartAccount,
+  fetchRecent,
+  fetchBody,
   getPoolStatus,
 };

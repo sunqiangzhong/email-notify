@@ -425,8 +425,6 @@ function AppContent() {
 
           {activeTab === 'wechat' && (
             <WeChatNotificationsView
-              wechatConfig={wechatConfig}
-              setWechatConfig={setWechatConfig}
               triggerToast={triggerToast}
             />
           )}
@@ -439,7 +437,7 @@ function AppContent() {
                 [currentUser.id]: {
                   accountsCount: accounts.length,
                   logsCount: logs.length,
-                  provider: wechatConfig.provider
+                  provider: 'wecom_app'
                 }
               }}
               triggerToast={triggerToast}

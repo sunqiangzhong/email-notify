@@ -1,337 +1,679 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  MessageSquareCode, Send, Filter, Clock, Bell, BellOff,
-  Key, Globe, Check, AlertCircle, Hash, X, Plus, RefreshCw
+  MessageSquareCode, Send, Filter, Bell, BellOff,
+  Key, Globe, Check, AlertCircle, X, Plus, RefreshCw,
+  Settings, Trash2, Edit3, ChevronDown, ChevronUp,
+  Slack, Send as Telegram, Webhook
 } from 'lucide-react';
-import { WeChatConfig, WeChatProvider } from '../types';
-import { notificationApi } from '../services/api';
+import { notificationApi, NotificationData, FilterData } from '../services/api';
+
+// 通知渠道类型定义
+interface NotificationType {
+  name: string;
+  description: string;
+  fields: Array<{
+    key: string;
+    label: string;
+    required: boolean;
+    hint: string;
+    default?: string;
+  }>;
+}
 
 interface Props {
-  wechatConfig: WeChatConfig;
-  setWechatConfig: React.Dispatch<React.SetStateAction<WeChatConfig>>;
   triggerToast: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
-export default function WeChatNotificationsView({ wechatConfig, setWechatConfig, triggerToast }: Props) {
-  // 渠道类型
-  const [provider, setProvider] = useState<WeChatProvider>(wechatConfig.provider);
+export default function WeChatNotificationsView({ triggerToast }: Props) {
+  // 通知渠道列表
+  const [notifications, setNotifications] = useState<NotificationData[]>([]);
+  // 通知类型配置
+  const [notificationTypes, setNotificationTypes] = useState<Record<string, NotificationType>>({});
+  // 过滤规则列表
+  const [filters, setFilters] = useState<FilterData[]>([]);
+  // 当前编辑的通知
+  const [editingNotification, setEditingNotification] = useState<Partial<NotificationData> | null>(null);
+  // 当前编辑的过滤规则
+  const [editingFilter, setEditingFilter] = useState<Partial<FilterData> | null>(null);
+  // 加载状态
+  const [loading, setLoading] = useState(true);
+  // 测试状态
+  const [testingId, setTestingId] = useState<string | null>(null);
+  // 展开的通知 ID
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // 企业微信应用消息
-  const [corpId, setCorpId] = useState('');
-  const [agentId, setAgentId] = useState('');
-  const [corpSecret, setCorpSecret] = useState('');
-  const [toUser, setToUser] = useState('@all');
-
-  // 企业微信群机器人
-  const [botKey, setBotKey] = useState('');
-
-  // Server酱
-  const [sendKey, setSendKey] = useState(wechatConfig.token || '');
-
-  // 自定义
-  const [customUrl, setCustomUrl] = useState(wechatConfig.webhookUrl || '');
-
-  // 过滤规则
-  const [enableFilter, setEnableFilter] = useState(wechatConfig.rules.enableFilter);
-  const [keywords, setKeywords] = useState(wechatConfig.rules.keywords);
-  const [dndEnabled, setDndEnabled] = useState(wechatConfig.rules.dndEnabled);
-  const [dndStart, setDndStart] = useState(wechatConfig.rules.dndStart);
-  const [dndEnd, setDndEnd] = useState(wechatConfig.rules.dndEnd);
-
-  const [testing, setTesting] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [newKeyword, setNewKeyword] = useState('');
-  const [savedNotificationId, setSavedNotificationId] = useState<string | null>(null);
-
-  const keywordList = keywords.split(',').map(k => k.trim()).filter(k => k.length > 0);
-
-  const handleAddKeyword = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newKeyword.trim()) return;
-    const f = newKeyword.trim();
-    if (keywordList.includes(f)) { triggerToast('关键词已存在', 'warning'); setNewKeyword(''); return; }
-    setKeywords(keywords ? keywords + ', ' + f : f);
-    setNewKeyword('');
-  };
-
-  const handleDeleteKeyword = (w: string) => {
-    setKeywords(keywordList.filter(k => k !== w).join(', '));
-  };
-
-  // 构建最终 webhookUrl 和 extra
-  const buildPayload = (): { webhookUrl: string; extra: any; type: string; name: string } | null => {
-    switch (provider) {
-      case 'wecom_app':
-        if (!corpId || !agentId || !corpSecret) { triggerToast('请填写完整的应用信息', 'error'); return null; }
-        return {
-          webhookUrl: '',
-          extra: { corpid: corpId, agentid: agentId, secret: corpSecret, touser: toUser },
-          type: 'wecom',
-          name: '企业微信应用消息',
-        };
-      case 'wecom_bot':
-        if (!botKey) { triggerToast('请输入群机器人 Webhook Key', 'error'); return null; }
-        return { webhookUrl: botKey, extra: {}, type: 'wecom_bot', name: '企业微信群机器人' };
-      case 'server_chan':
-        if (!sendKey) { triggerToast('请输入 SendKey', 'error'); return null; }
-        return { webhookUrl: 'https://sctapi.ftqq.com/' + sendKey + '.send', extra: {}, type: 'serverchan', name: 'Server酱' };
-      case 'custom_webhook':
-        if (!customUrl) { triggerToast('请输入 Webhook URL', 'error'); return null; }
-        return { webhookUrl: customUrl, extra: {}, type: 'custom', name: '自定义 Webhook' };
-      default:
-        return null;
-    }
-  };
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const payload = buildPayload();
-    if (!payload) return;
-
-    setSaving(true);
+  // 加载数据
+  const loadData = useCallback(async () => {
+    setLoading(true);
     try {
-      const result = await notificationApi.create({
-        name: payload.name,
-        type: payload.type as any,
-        webhookUrl: payload.webhookUrl,
-        secret: null,
-        active: true,
-      });
+      const [typesRes, notifsRes, filtersRes] = await Promise.allSettled([
+        notificationApi.getTypes(),
+        notificationApi.getAll(),
+        notificationApi.getAllFilters(),
+      ]);
+
+      if (typesRes.status === 'fulfilled' && typesRes.value.success) {
+        setNotificationTypes(typesRes.value.data);
+      }
+
+      if (notifsRes.status === 'fulfilled' && notifsRes.value.success) {
+        setNotifications(notifsRes.value.data);
+      }
+
+      if (filtersRes.status === 'fulfilled' && filtersRes.value.success) {
+        setFilters(filtersRes.value.data);
+      }
+    } catch (error) {
+      console.error('加载通知配置失败:', error);
+      triggerToast('加载通知配置失败', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [triggerToast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // 创建新通知渠道
+  const handleCreateNotification = (type: string) => {
+    const typeConfig = notificationTypes[type];
+    if (!typeConfig) return;
+
+    // 初始化默认配置
+    const defaultConfig: Record<string, string> = {};
+    typeConfig.fields.forEach(field => {
+      if (field.default) {
+        defaultConfig[field.key] = field.default;
+      }
+    });
+
+    setEditingNotification({
+      name: typeConfig.name,
+      type: type as NotificationData['type'],
+      config: defaultConfig,
+      active: true,
+    });
+  };
+
+  // 保存通知渠道
+  const handleSaveNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingNotification) return;
+
+    try {
+      let result;
+      if (editingNotification.id) {
+        result = await notificationApi.update(editingNotification.id, editingNotification);
+      } else {
+        result = await notificationApi.create(editingNotification);
+      }
 
       if (result.success) {
-        setSavedNotificationId(result.data.id);
-
-        if (enableFilter && keywordList.length > 0) {
-          await notificationApi.createFilter({ name: '关键词过滤', keywords: keywordList, matchType: 'any', active: true });
-        }
-
-        setWechatConfig({
-          provider,
-          token: sendKey,
-          secret: corpSecret,
-          webhookUrl: payload.webhookUrl,
-          rules: { enableFilter, keywords, dndEnabled, dndStart, dndEnd },
-        });
-
-        triggerToast('推送配置已保存！', 'success');
+        triggerToast('通知渠道保存成功', 'success');
+        setEditingNotification(null);
+        loadData();
       }
-    } catch (err: any) {
-      triggerToast('保存失败: ' + (err.message || '服务器错误'), 'error');
-    } finally {
-      setSaving(false);
+    } catch (error: any) {
+      triggerToast('保存失败: ' + (error.message || '服务器错误'), 'error');
     }
   };
 
-  const handleTest = async () => {
-    if (!savedNotificationId) { triggerToast('请先保存配置', 'warning'); return; }
-    setTesting(true);
+  // 删除通知渠道
+  const handleDeleteNotification = async (id: string) => {
+    if (!confirm('确定要删除这个通知渠道吗？')) return;
+
     try {
-      const r = await notificationApi.testSend(savedNotificationId);
-      triggerToast(r.success ? '测试通知已送达！' : '发送失败: ' + r.message, r.success ? 'success' : 'error');
-    } catch (err: any) {
-      triggerToast('测试失败: ' + err.message, 'error');
-    } finally {
-      setTesting(false);
+      const result = await notificationApi.delete(id);
+      if (result.success) {
+        triggerToast('通知渠道已删除', 'success');
+        loadData();
+      }
+    } catch (error: any) {
+      triggerToast('删除失败: ' + (error.message || '服务器错误'), 'error');
     }
   };
+
+  // 测试通知
+  const handleTestNotification = async (id: string) => {
+    setTestingId(id);
+    try {
+      const result = await notificationApi.testSend(id);
+      triggerToast(result.success ? '测试通知已送达！' : '发送失败: ' + result.message, result.success ? 'success' : 'error');
+    } catch (error: any) {
+      triggerToast('测试失败: ' + error.message, 'error');
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  // 创建过滤规则
+  const handleCreateFilter = () => {
+    setEditingFilter({
+      name: '',
+      keywords: [],
+      matchType: 'any',
+      active: true,
+    });
+  };
+
+  // 保存过滤规则
+  const handleSaveFilter = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFilter) return;
+
+    try {
+      let result;
+      if (editingFilter.id) {
+        result = await notificationApi.updateFilter(editingFilter.id, editingFilter);
+      } else {
+        result = await notificationApi.createFilter(editingFilter);
+      }
+
+      if (result.success) {
+        triggerToast('过滤规则保存成功', 'success');
+        setEditingFilter(null);
+        loadData();
+      }
+    } catch (error: any) {
+      triggerToast('保存失败: ' + (error.message || '服务器错误'), 'error');
+    }
+  };
+
+  // 删除过滤规则
+  const handleDeleteFilter = async (id: string) => {
+    if (!confirm('确定要删除这个过滤规则吗？')) return;
+
+    try {
+      const result = await notificationApi.deleteFilter(id);
+      if (result.success) {
+        triggerToast('过滤规则已删除', 'success');
+        loadData();
+      }
+    } catch (error: any) {
+      triggerToast('删除失败: ' + (error.message || '服务器错误'), 'error');
+    }
+  };
+
+  // 获取渠道图标
+  const getChannelIcon = (type: string) => {
+    switch (type) {
+      case 'wecom_app':
+      case 'wecom_webhook':
+        return <MessageSquareCode className="w-4 h-4 text-green-500" />;
+      case 'server_chan':
+        return <Bell className="w-4 h-4 text-orange-500" />;
+      case 'telegram':
+        return <Send className="w-4 h-4 text-blue-500" />;
+      case 'dingtalk':
+        return <MessageSquareCode className="w-4 h-4 text-blue-600" />;
+      case 'feishu':
+        return <MessageSquareCode className="w-4 h-4 text-blue-400" />;
+      case 'custom_webhook':
+        return <Webhook className="w-4 h-4 text-purple-500" />;
+      default:
+        return <Bell className="w-4 h-4 text-slate-400" />;
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-[#8B949E]">
+        <RefreshCw className="w-5 h-5 animate-spin mr-2" />
+        <span>正在加载通知配置...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
+      {/* 页面标题 */}
       <div>
-        <h1 className="text-xl font-bold text-[#E6EDF3] tracking-tight font-display">微信通知配置</h1>
-        <p className="text-[#8B949E] text-xs mt-0.5">配置推送渠道、关键词过滤和免打扰规则</p>
+        <h1 className="text-xl font-bold text-[#E6EDF3] tracking-tight font-display">通知配置</h1>
+        <p className="text-[#8B949E] text-xs mt-0.5">配置多种通知渠道，接收邮件推送提醒</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
-        {/* 左侧：推送通道 */}
-        <div className="lg:col-span-7">
-          <form onSubmit={handleSave} className="p-4 rounded-lg border border-[#30363D] bg-[#161B22] space-y-4">
-            <h2 className="text-xs font-semibold text-[#E6EDF3] border-l-2 border-blue-500 pl-2">1. 推送通道设置</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* 左侧：通知渠道列表 */}
+        <div className="lg:col-span-7 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold text-[#E6EDF3] flex items-center gap-2">
+              <Bell className="w-4 h-4 text-blue-400" />
+              <span>通知渠道</span>
+            </h2>
+            <button
+              onClick={() => setEditingNotification({ type: 'wecom_app', config: {}, active: true })}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold cursor-pointer"
+            >
+              <Plus className="w-3 h-3" />
+              <span>添加渠道</span>
+            </button>
+          </div>
 
-            {/* 渠道选择 */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-[#8B949E]">选择接入渠道</label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                {[
-                  { id: 'wecom_app', label: '企微应用' },
-                  { id: 'wecom_bot', label: '企微机器人' },
-                  { id: 'server_chan', label: 'Server 酱' },
-                  { id: 'custom_webhook', label: '自定义' },
-                ].map(p => (
-                  <button key={p.id} type="button" onClick={() => setProvider(p.id as WeChatProvider)}
-                    className={'py-1.5 px-1 text-[11px] font-semibold rounded border transition-all text-center cursor-pointer ' +
-                      (provider === p.id
-                        ? 'bg-[#1F242C] border-[#30363D] text-[#58A6FF]'
-                        : 'bg-[#0D1117] border-[#30363D] text-[#8B949E] hover:text-[#C9D1D9]')}>
-                    {p.label}
+          {/* 渠道列表 */}
+          {notifications.length === 0 ? (
+            <div className="p-8 rounded-lg border border-[#30363D] bg-[#161B22] text-center">
+              <BellOff className="w-8 h-8 text-slate-500 mx-auto mb-2" />
+              <p className="text-sm text-[#8B949E]">暂未配置通知渠道</p>
+              <p className="text-xs text-slate-500 mt-1">点击上方按钮添加通知渠道</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {notifications.map(notif => (
+                <div
+                  key={notif.id}
+                  className="rounded-lg border border-[#30363D] bg-[#161B22] overflow-hidden"
+                >
+                  {/* 渠道头部 */}
+                  <div
+                    className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-[#1F242C]/50 transition-colors"
+                    onClick={() => setExpandedId(expandedId === notif.id ? null : notif.id)}
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-[#0D1117] border border-[#30363D] flex items-center justify-center">
+                      {getChannelIcon(notif.type)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-[#E6EDF3]">{notif.name}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                          notif.active
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-slate-500/10 text-slate-400 border border-slate-500/30'
+                        }`}>
+                          {notif.active ? '已启用' : '已禁用'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        {notificationTypes[notif.type]?.name || notif.type}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTestNotification(notif.id);
+                        }}
+                        disabled={testingId === notif.id}
+                        className="p-1.5 rounded hover:bg-[#21262d] text-[#8B949E] hover:text-[#C9D1D9] cursor-pointer disabled:opacity-50"
+                        title="测试发送"
+                      >
+                        <Send className={`w-3.5 h-3.5 ${testingId === notif.id ? 'animate-bounce text-blue-400' : ''}`} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingNotification(notif);
+                        }}
+                        className="p-1.5 rounded hover:bg-[#21262d] text-[#8B949E] hover:text-[#C9D1D9] cursor-pointer"
+                        title="编辑"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteNotification(notif.id);
+                        }}
+                        className="p-1.5 rounded hover:bg-[#21262d] text-[#8B949E] hover:text-rose-400 cursor-pointer"
+                        title="删除"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      {expandedId === notif.id ? (
+                        <ChevronUp className="w-3.5 h-3.5 text-slate-500" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 展开的详情 */}
+                  {expandedId === notif.id && (
+                    <div className="px-4 py-3 border-t border-[#30363D] bg-[#0D1117] text-xs">
+                      <div className="grid grid-cols-2 gap-2">
+                        {Object.entries(notif.config || {}).map(([key, value]) => (
+                          value ? (
+                            <div key={key} className="flex items-start gap-2">
+                              <span className="text-slate-500 shrink-0">{key}:</span>
+                              <span className="text-[#C9D1D9] font-mono break-all">
+                                {key.toLowerCase().includes('secret') || key.toLowerCase().includes('token') || key.toLowerCase().includes('key')
+                                  ? '••••••'
+                                  : String(value)
+                                }
+                              </span>
+                            </div>
+                          ) : null
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 添加渠道选择 */}
+          {!editingNotification && (
+            <div className="p-3 rounded-lg border border-dashed border-[#30363D] bg-[#161B22]/50">
+              <p className="text-[10px] text-slate-500 mb-2">快速添加:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(notificationTypes).map(([type, config]) => (
+                  <button
+                    key={type}
+                    onClick={() => handleCreateNotification(type)}
+                    className="flex items-center gap-1 px-2 py-1 rounded bg-[#0D1117] border border-[#30363D] text-[10px] text-[#8B949E] hover:text-[#C9D1D9] hover:border-[#58A6FF]/50 cursor-pointer transition-colors"
+                  >
+                    {getChannelIcon(type)}
+                    <span>{config.name}</span>
                   </button>
                 ))}
               </div>
             </div>
+          )}
 
-            {/* 企业微信应用消息 */}
-            {provider === 'wecom_app' && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-[#8B949E]">Corp ID <span className="text-rose-400">*</span></label>
-                    <input type="text" required placeholder="ww8abc8923e1e219ba"
-                      value={corpId} onChange={e => setCorpId(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs font-mono" />
+          {/* 编辑表单 */}
+          {editingNotification && (
+            <form onSubmit={handleSaveNotification} className="p-4 rounded-lg border border-[#58A6FF]/30 bg-[#161B22] space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-[#E6EDF3]">
+                  {editingNotification.id ? '编辑通知渠道' : '添加通知渠道'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setEditingNotification(null)}
+                  className="p-1 rounded hover:bg-[#21262d] text-[#8B949E] cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* 渠道类型选择 */}
+              {!editingNotification.id && (
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-[#8B949E]">通知渠道类型</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                    {Object.entries(notificationTypes).map(([type, config]) => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => {
+                          const defaultConfig: Record<string, string> = {};
+                          config.fields.forEach(field => {
+                            if (field.default) defaultConfig[field.key] = field.default;
+                          });
+                          setEditingNotification({
+                            ...editingNotification,
+                            type: type as NotificationData['type'],
+                            name: config.name,
+                            config: defaultConfig,
+                          });
+                        }}
+                        className={`py-1.5 px-2 text-[11px] font-semibold rounded border transition-all text-center cursor-pointer ${
+                          editingNotification.type === type
+                            ? 'bg-[#1F242C] border-[#58A6FF] text-[#58A6FF]'
+                            : 'bg-[#0D1117] border-[#30363D] text-[#8B949E] hover:text-[#C9D1D9]'
+                        }`}
+                      >
+                        {config.name}
+                      </button>
+                    ))}
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-semibold text-[#8B949E]">Agent ID <span className="text-rose-400">*</span></label>
-                    <input type="number" required placeholder="1000002"
-                      value={agentId} onChange={e => setAgentId(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs font-mono" />
-                  </div>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-[#8B949E]">Secret <span className="text-rose-400">*</span></label>
-                  <input type="password" required placeholder="应用的 Secret 密钥"
-                    value={corpSecret} onChange={e => setCorpSecret(e.target.value)}
-                    className="w-full px-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs font-mono" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-[#8B949E]">接收人 (默认 @all 全员)</label>
-                  <input type="text" placeholder="@all 或 userid1|userid2"
-                    value={toUser} onChange={e => setToUser(e.target.value)}
-                    className="w-full px-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs font-mono" />
-                </div>
-                <div className="p-2.5 bg-[#0D1117] rounded-md border border-[#30363D] text-[10px] text-slate-500 space-y-1">
-                  <p>1. 登录 <a href="https://work.weixin.qq.com" target="_blank" className="text-blue-400 underline">企业微信管理后台</a></p>
-                  <p>2. 应用管理 → 自建 → 创建/选择应用</p>
-                  <p>3. 获取 AgentId 和 Secret，企业 ID 在「我的企业」页面</p>
-                </div>
-              </div>
-            )}
+              )}
 
-            {/* 企业微信群机器人 */}
-            {provider === 'wecom_bot' && (
+              {/* 名称 */}
               <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-[#8B949E]">Webhook Key</label>
-                <div className="relative">
-                  <Key className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input type="text" required placeholder="e.g. ***-xxxx-xxxx"
-                    value={botKey} onChange={e => setBotKey(e.target.value)}
-                    className="w-full pl-8 pr-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs font-mono" />
-                </div>
-                <p className="text-[9px] text-slate-500">群聊 → 群机器人 → 添加机器人 → 复制 Webhook 地址中的 key</p>
+                <label className="text-[11px] font-semibold text-[#8B949E]">渠道名称</label>
+                <input
+                  type="text"
+                  required
+                  value={editingNotification.name || ''}
+                  onChange={e => setEditingNotification({ ...editingNotification, name: e.target.value })}
+                  className="w-full px-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs"
+                  placeholder="给这个渠道起个名字"
+                />
               </div>
-            )}
 
-            {/* Server酱 */}
-            {provider === 'server_chan' && (
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-[#8B949E]">SendKey</label>
-                <div className="relative">
-                  <Key className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input type="text" required placeholder="SCT89237t7r9b..."
-                    value={sendKey} onChange={e => setSendKey(e.target.value)}
-                    className="w-full pl-8 pr-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs font-mono" />
+              {/* 动态配置项 */}
+              {editingNotification.type && notificationTypes[editingNotification.type]?.fields.map(field => (
+                <div key={field.key} className="space-y-1">
+                  <label className="text-[11px] font-semibold text-[#8B949E]">
+                    {field.label}
+                    {field.required && <span className="text-rose-400 ml-0.5">*</span>}
+                  </label>
+                  <input
+                    type={field.key.toLowerCase().includes('secret') || field.key.toLowerCase().includes('token') || field.key.toLowerCase().includes('key') || field.key.toLowerCase().includes('password') ? 'password' : 'text'}
+                    required={field.required}
+                    value={editingNotification.config?.[field.key as keyof typeof editingNotification.config] || ''}
+                    onChange={e => setEditingNotification({
+                      ...editingNotification,
+                      config: { ...editingNotification.config, [field.key]: e.target.value },
+                    })}
+                    className="w-full px-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs font-mono"
+                    placeholder={field.hint}
+                  />
+                  {field.hint && (
+                    <p className="text-[9px] text-slate-500">{field.hint}</p>
+                  )}
                 </div>
-              </div>
-            )}
+              ))}
 
-            {/* 自定义 */}
-            {provider === 'custom_webhook' && (
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-[#8B949E]">Webhook URL</label>
-                <div className="relative">
-                  <Globe className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input type="url" required placeholder="https://your-domain.com/webhook"
-                    value={customUrl} onChange={e => setCustomUrl(e.target.value)}
-                    className="w-full pl-8 pr-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs font-mono" />
+              {/* 启用状态 */}
+              <div className="flex items-center justify-between p-2.5 bg-[#0D1117] rounded-md border border-[#30363D]">
+                <div>
+                  <span className="text-xs font-semibold text-[#C9D1D9] block">启用通知</span>
+                  <span className="text-[10px] text-slate-500 block">开启后将通过此渠道发送通知</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingNotification({
+                    ...editingNotification,
+                    active: !editingNotification.active,
+                  })}
+                  className={`relative inline-flex h-5 w-9 rounded-full cursor-pointer transition-colors ${
+                    editingNotification.active ? 'bg-blue-600' : 'bg-[#1D2128]'
+                  }`}
+                >
+                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5 ${
+                    editingNotification.active ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'
+                  }`} />
+                </button>
               </div>
-            )}
 
-            {/* 按钮 */}
-            <div className="flex items-center justify-between pt-3 border-t border-[#30363D]">
-              <button type="button" onClick={handleTest} disabled={testing || !savedNotificationId}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[#30363D] bg-[#161B22] text-[#C9D1D9] hover:bg-[#21262d] disabled:opacity-50 cursor-pointer">
-                <Send className={'w-3.5 h-3.5 ' + (testing ? 'animate-bounce text-blue-400' : '')} />
-                <span>{testing ? '发送中...' : '测试推送'}</span>
-              </button>
-              <button type="submit" disabled={saving}
-                className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer disabled:opacity-50">
-                {saving ? '保存中...' : '保存配置'}
-              </button>
-            </div>
-          </form>
+              {/* 按钮 */}
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#30363D]">
+                <button
+                  type="button"
+                  onClick={() => setEditingNotification(null)}
+                  className="px-3 py-1.5 rounded-md border border-[#30363D] text-[#C9D1D9] text-xs font-semibold hover:bg-[#21262d] cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer"
+                >
+                  保存
+                </button>
+              </div>
+            </form>
+          )}
         </div>
 
         {/* 右侧：过滤规则 */}
-        <div className="lg:col-span-5">
-          <div className="p-4 rounded-lg border border-[#30363D] bg-[#161B22] space-y-4">
-            <h2 className="text-xs font-semibold text-[#E6EDF3] flex items-center gap-2 border-l-2 border-blue-500 pl-2">
+        <div className="lg:col-span-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold text-[#E6EDF3] flex items-center gap-2">
               <Filter className="w-4 h-4 text-blue-400" />
-              <span>2. 过滤规则与免打扰</span>
+              <span>过滤规则</span>
             </h2>
-
-            <div className="flex items-center justify-between p-2.5 bg-[#0D1117] rounded-md border border-[#30363D]">
-              <div>
-                <span className="text-xs font-semibold text-[#C9D1D9] block">关键词过滤</span>
-                <span className="text-[10px] text-slate-500 block">仅匹配时推送</span>
-              </div>
-              <button type="button" onClick={() => setEnableFilter(!enableFilter)}
-                className={'relative inline-flex h-5 w-9 rounded-full cursor-pointer transition-colors ' + (enableFilter ? 'bg-blue-600' : 'bg-[#1D2128]')}>
-                <span className={'inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5 ' + (enableFilter ? 'translate-x-4 ml-0.5' : 'translate-x-0.5')} />
-              </button>
-            </div>
-
-            <div className={'space-y-2 transition-opacity ' + (enableFilter ? 'opacity-100' : 'opacity-40 pointer-events-none')}>
-              <form onSubmit={handleAddKeyword} className="flex gap-1.5">
-                <div className="relative flex-1">
-                  <Hash className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input type="text" disabled={!enableFilter} placeholder="输入关键词回车添加"
-                    value={newKeyword} onChange={e => setNewKeyword(e.target.value)}
-                    className="w-full pl-7 pr-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs" />
-                </div>
-                <button type="submit" disabled={!enableFilter}
-                  className="p-1.5 rounded-md bg-blue-600 text-white disabled:opacity-40 cursor-pointer">
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
-              </form>
-              <div className="flex flex-wrap gap-1.5 p-2.5 min-h-[50px] bg-[#0D1117] rounded-md border border-[#30363D]">
-                {keywordList.length === 0
-                  ? <span className="text-[10px] text-slate-500 m-auto">暂无关键词</span>
-                  : keywordList.map(tag => (
-                    <span key={tag} className="inline-flex items-center gap-1 pl-2 pr-0.5 py-0.5 rounded bg-[#161B22] border border-[#30363D] text-blue-400 text-[10px]">
-                      {tag}
-                      <button type="button" onClick={() => handleDeleteKeyword(tag)} className="p-0.5 text-slate-400 hover:text-rose-400 cursor-pointer">
-                        <X className="w-2.5 h-2.5" />
-                      </button>
-                    </span>
-                  ))}
-              </div>
-            </div>
-
-            <div className="space-y-2 pt-1">
-              <div className="flex items-center justify-between p-2.5 bg-[#0D1117] rounded-md border border-[#30363D]">
-                <div>
-                  <span className="text-xs font-semibold text-[#C9D1D9] block">免打扰 (DND)</span>
-                  <span className="text-[10px] text-slate-500 block">时段内不推送</span>
-                </div>
-                <button type="button" onClick={() => setDndEnabled(!dndEnabled)}
-                  className={'relative inline-flex h-5 w-9 rounded-full cursor-pointer transition-colors ' + (dndEnabled ? 'bg-blue-600' : 'bg-[#1D2128]')}>
-                  <span className={'inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5 ' + (dndEnabled ? 'translate-x-4 ml-0.5' : 'translate-x-0.5')} />
-                </button>
-              </div>
-              <div className={'grid grid-cols-2 gap-2 transition-opacity ' + (dndEnabled ? 'opacity-100' : 'opacity-40 pointer-events-none')}>
-                <div className="space-y-1">
-                  <span className="text-[10px] text-slate-500">开始</span>
-                  <input type="time" value={dndStart} onChange={e => setDndStart(e.target.value)}
-                    className="w-full px-2 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] text-xs font-mono" />
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[10px] text-slate-500">结束</span>
-                  <input type="time" value={dndEnd} onChange={e => setDndEnd(e.target.value)}
-                    className="w-full px-2 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] text-xs font-mono" />
-                </div>
-              </div>
-            </div>
+            <button
+              onClick={handleCreateFilter}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#161B22] border border-[#30363D] text-[#C9D1D9] text-[11px] font-semibold hover:bg-[#21262d] cursor-pointer"
+            >
+              <Plus className="w-3 h-3" />
+              <span>添加规则</span>
+            </button>
           </div>
+
+          {/* 规则列表 */}
+          {filters.length === 0 ? (
+            <div className="p-6 rounded-lg border border-[#30363D] bg-[#161B22] text-center">
+              <Filter className="w-6 h-6 text-slate-500 mx-auto mb-2" />
+              <p className="text-xs text-[#8B949E]">暂无过滤规则</p>
+              <p className="text-[10px] text-slate-500 mt-1">添加规则可以过滤特定邮件</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filters.map(filter => (
+                <div
+                  key={filter.id}
+                  className="p-3 rounded-lg border border-[#30363D] bg-[#161B22]"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-[#E6EDF3]">{filter.name}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                          filter.active
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-slate-500/10 text-slate-400 border border-slate-500/30'
+                        }`}>
+                          {filter.active ? '已启用' : '已禁用'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-1">
+                        匹配模式: {filter.matchType === 'all' ? '全部匹配' : '任一匹配'}
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {filter.keywords.map(keyword => (
+                          <span key={keyword} className="px-1.5 py-0.5 rounded bg-[#0D1117] border border-[#30363D] text-[10px] text-blue-400">
+                            {keyword}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setEditingFilter(filter)}
+                        className="p-1 rounded hover:bg-[#21262d] text-[#8B949E] hover:text-[#C9D1D9] cursor-pointer"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteFilter(filter.id)}
+                        className="p-1 rounded hover:bg-[#21262d] text-[#8B949E] hover:text-rose-400 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 编辑过滤规则 */}
+          {editingFilter && (
+            <form onSubmit={handleSaveFilter} className="p-4 rounded-lg border border-[#58A6FF]/30 bg-[#161B22] space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-[#E6EDF3]">
+                  {editingFilter.id ? '编辑过滤规则' : '添加过滤规则'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setEditingFilter(null)}
+                  className="p-1 rounded hover:bg-[#21262d] text-[#8B949E] cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-[#8B949E]">规则名称</label>
+                <input
+                  type="text"
+                  required
+                  value={editingFilter.name || ''}
+                  onChange={e => setEditingFilter({ ...editingFilter, name: e.target.value })}
+                  className="w-full px-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs"
+                  placeholder="给规则起个名字"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-[#8B949E]">关键词（每行一个）</label>
+                <textarea
+                  value={(editingFilter.keywords || []).join('\n')}
+                  onChange={e => setEditingFilter({
+                    ...editingFilter,
+                    keywords: e.target.value.split('\n').filter(k => k.trim()),
+                  })}
+                  className="w-full px-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded-md text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs h-20 resize-none"
+                  placeholder="输入关键词，每行一个"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-[#8B949E]">匹配模式</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingFilter({ ...editingFilter, matchType: 'any' })}
+                    className={`flex-1 py-1.5 rounded text-[11px] font-semibold border cursor-pointer ${
+                      editingFilter.matchType === 'any'
+                        ? 'bg-[#1F242C] border-[#58A6FF] text-[#58A6FF]'
+                        : 'bg-[#0D1117] border-[#30363D] text-[#8B949E]'
+                    }`}
+                  >
+                    任一匹配
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingFilter({ ...editingFilter, matchType: 'all' })}
+                    className={`flex-1 py-1.5 rounded text-[11px] font-semibold border cursor-pointer ${
+                      editingFilter.matchType === 'all'
+                        ? 'bg-[#1F242C] border-[#58A6FF] text-[#58A6FF]'
+                        : 'bg-[#0D1117] border-[#30363D] text-[#8B949E]'
+                    }`}
+                  >
+                    全部匹配
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 bg-[#0D1117] rounded-md border border-[#30363D]">
+                <span className="text-xs text-[#C9D1D9]">启用规则</span>
+                <button
+                  type="button"
+                  onClick={() => setEditingFilter({ ...editingFilter, active: !editingFilter.active })}
+                  className={`relative inline-flex h-5 w-9 rounded-full cursor-pointer transition-colors ${
+                    editingFilter.active ? 'bg-blue-600' : 'bg-[#1D2128]'
+                  }`}
+                >
+                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5 ${
+                    editingFilter.active ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#30363D]">
+                <button
+                  type="button"
+                  onClick={() => setEditingFilter(null)}
+                  className="px-3 py-1.5 rounded-md border border-[#30363D] text-[#C9D1D9] text-xs font-semibold hover:bg-[#21262d] cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer"
+                >
+                  保存
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       </div>
     </div>
