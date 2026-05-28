@@ -2,6 +2,7 @@ export type MailProvider = 'qq' | 'gmail' | 'outlook' | 'custom';
 
 export interface MailAccount {
   id: string;
+  name?: string;
   email: string;
   type: MailProvider;
   status: 'online' | 'error' | 'connecting';
@@ -15,6 +16,7 @@ export type ForwardStatus = 'forwarded' | 'sending' | 'failed' | 'no_channel';
 
 export interface EmailLog {
   id: string;
+  uid?: number;
   subject: string;
   senderName: string;
   senderEmail: string;

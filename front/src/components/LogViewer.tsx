@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Terminal, X, Trash2 } from 'lucide-react';
+import { Terminal, X, Trash2, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface LogEntry {
@@ -31,9 +31,27 @@ export default function LogViewer() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [connected, setConnected] = useState(false);
   const [unread, setUnread] = useState(0);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [newLogCount, setNewLogCount] = useState(0);
   const eventSourceRef = useRef<EventSource | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isAtBottomRef = useRef(true);
+
+  const scrollToBottom = useCallback(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+      setShowScrollBtn(false);
+      setNewLogCount(0);
+      isAtBottomRef.current = true;
+    }
+  }, []);
+
+  const checkIfAtBottom = useCallback(() => {
+    if (!listRef.current) return true;
+    const { scrollTop, scrollHeight, clientHeight } = listRef.current;
+    return scrollHeight - scrollTop - clientHeight < 50;
+  }, []);
 
   const connectSSE = useCallback(() => {
     // 清理旧连接
@@ -70,6 +88,10 @@ export default function LogViewer() {
           setLogs(prev => [entry, ...prev].slice(0, 200));
           if (!isOpen) {
             setUnread(prev => prev + 1);
+          } else if (!isAtBottomRef.current) {
+            // 弹窗打开但用户不在底部，显示浮动按钮
+            setNewLogCount(prev => prev + 1);
+            setShowScrollBtn(true);
           }
         } catch (e) {}
       });
@@ -96,11 +118,24 @@ export default function LogViewer() {
   useEffect(() => {
     if (isOpen) {
       setUnread(0);
+      setShowScrollBtn(false);
+      setNewLogCount(0);
+      // 打开时自动滚动到底部
       setTimeout(() => {
-        if (listRef.current) listRef.current.scrollTop = 0;
-      }, 100);
+        scrollToBottom();
+      }, 150);
     }
-  }, [isOpen]);
+  }, [isOpen, scrollToBottom]);
+
+  // 监听滚动事件，判断用户是否在底部
+  const handleScroll = useCallback(() => {
+    const atBottom = checkIfAtBottom();
+    isAtBottomRef.current = atBottom;
+    if (atBottom) {
+      setShowScrollBtn(false);
+      setNewLogCount(0);
+    }
+  }, [checkIfAtBottom]);
 
   const formatTime = (ts: string) => {
     try {
@@ -159,7 +194,11 @@ export default function LogViewer() {
               </div>
 
               {/* 日志列表 */}
-              <div ref={listRef} className="flex-1 overflow-y-auto p-3 space-y-0.5 min-h-[300px]">
+              <div
+                ref={listRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto p-3 space-y-0.5 min-h-[300px] relative"
+              >
                 {logs.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-slate-500 py-16">
                     <Terminal className="w-8 h-8 mb-3 opacity-30" />
@@ -180,6 +219,22 @@ export default function LogViewer() {
                     </div>
                   ))
                 )}
+
+                {/* 浮动「查看最新」按钮 */}
+                <AnimatePresence>
+                  {showScrollBtn && (
+                    <motion.button
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      onClick={scrollToBottom}
+                      className="sticky bottom-3 float-right flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold shadow-lg shadow-blue-600/30 transition-all cursor-pointer z-10"
+                    >
+                      <ChevronDown className="w-3.5 h-3.5" />
+                      <span>{newLogCount > 0 ? `${newLogCount} 条新日志` : '查看最新'}</span>
+                    </motion.button>
+                  )}
+                </AnimatePresence>
               </div>
 
               {/* 底部 */}

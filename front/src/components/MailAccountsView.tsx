@@ -11,7 +11,8 @@ import {
   X,
   ShieldAlert,
   ArrowRight,
-  Sparkles
+  Sparkles,
+  Pencil
 } from 'lucide-react';
 import { MailAccount, MailProvider } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -53,6 +54,25 @@ export default function MailAccountsView({
   const [expandedBody, setExpandedBody] = useState('');
   const [loadingBody, setLoadingBody] = useState(false);
 
+  // 连通性测试结果（按账户 ID 索引）
+  interface ConnTestResult {
+    success: boolean;
+    responseTime: number;
+    openTime: number;
+    serverHost: string;
+    serverPort: number;
+    serverGreeting: string;
+    tlsStatus: boolean;
+    accountEmail: string;
+    provider: string;
+    inbox: { total: number; unseen: number };
+    error?: string;
+    testedAt: number;
+  }
+  const [connResults, setConnResults] = useState<Record<string, ConnTestResult>>({});
+  // 展开连通性详情的账户 ID
+  const [expandedConnId, setExpandedConnId] = useState<string | null>(null);
+
   // Form states
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -66,6 +86,9 @@ export default function MailAccountsView({
   const [useProxy, setUseProxy] = useState(false);
   const [proxyList, setProxyList] = useState<Array<{ id: string; name: string; type: string; host: string; port: number }>>([]);
   const [selectedProxyId, setSelectedProxyId] = useState<string>('');
+
+  // 编辑模式状态
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
 
   // Auto-fill configuration helpers when provider changes
   const handleProviderSelect = (selected: MailProvider) => {
@@ -182,6 +205,82 @@ export default function MailAccountsView({
     }
   };
 
+  // 打开编辑弹窗，预填表单
+  const handleOpenEditModal = async (acc: MailAccount) => {
+    setEditingAccountId(acc.id);
+    setName(acc.name || acc.email?.split('@')[0] || '');
+    setEmail(acc.email);
+    setAuthCode(''); // 不预填密码
+    setImapHost(acc.imapHost);
+    setImapPort(acc.imapPort);
+    setSsl(acc.ssl);
+    // 加载代理列表
+    try {
+      const { proxyApi } = await import('../services/api');
+      const res = await proxyApi.getAll();
+      if (res.success) setProxyList(res.data);
+    } catch (e) {}
+    setIsModalOpen(true);
+  };
+
+  // 提交编辑
+  const handleUpdateAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAccountId) return;
+
+    if (!name) { triggerToast('请输入邮箱名称', 'error'); return; }
+    if (!email) { triggerToast('请输入邮箱地址', 'error'); return; }
+    if (!imapHost) { triggerToast('请输入 IMAP 主机地址', 'error'); return; }
+
+    setSubmitting(true);
+    const selectedProxy = useProxy && selectedProxyId ? proxyList.find(p => p.id === selectedProxyId) : null;
+
+    try {
+      const updateData: any = {
+        name,
+        email,
+        imapHost,
+        imapPort,
+        useSSL: ssl,
+        useProxy: !!selectedProxy,
+        proxyId: selectedProxy?.id || null,
+      };
+      // 只在用户填写了新密码时才更新
+      if (authCode) updateData.password = authCode;
+
+      const result = await emailApi.update(editingAccountId, updateData);
+
+      if (result.success) {
+        setAccounts(prev => prev.map(acc => acc.id === editingAccountId ? {
+          ...acc,
+          name: name,
+          email: result.data.email,
+          imapHost: result.data.imapHost,
+          imapPort: result.data.imapPort,
+          ssl: result.data.useSSL,
+        } : acc));
+        setIsModalOpen(false);
+        setEditingAccountId(null);
+        triggerToast(`邮箱 ${email} 配置已更新并重启监听`, 'success');
+        // Reset form
+        setName(''); setEmail(''); setAuthCode('');
+        handleProviderSelect('qq');
+      }
+    } catch (error: any) {
+      triggerToast(`更新失败: ${error.message || '服务器错误'}`, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // 关闭弹窗时重置编辑状态
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setEditingAccountId(null);
+    setName(''); setEmail(''); setAuthCode('');
+    handleProviderSelect('qq');
+  };
+
   // Test single account IMAP connection（已有邮箱用存储密码）
   const handleTestConnection = async (id: string, emailStr: string) => {
     setTestingId(id);
@@ -190,7 +289,25 @@ export default function MailAccountsView({
     try {
       const result = await emailApi.testExistingConnection(id);
 
-      if (result.success) {
+      if (result.success && result.data) {
+        const d = result.data;
+        setConnResults(prev => ({
+          ...prev,
+          [id]: {
+            success: true,
+            responseTime: d.responseTime,
+            openTime: d.openTime,
+            serverHost: d.serverHost,
+            serverPort: d.serverPort,
+            serverGreeting: d.serverGreeting,
+            tlsStatus: d.tlsStatus,
+            accountEmail: d.accountEmail,
+            provider: d.provider,
+            inbox: d.inbox,
+            testedAt: Date.now(),
+          },
+        }));
+        setExpandedConnId(id);
         setAccounts(prev => prev.map(acc => {
           if (acc.id === id) {
             return {
@@ -201,8 +318,26 @@ export default function MailAccountsView({
           }
           return acc;
         }));
-        triggerToast(`${emailStr} 连接成功！响应时间: ${result.data?.responseTime || 0}ms`, 'success');
+        triggerToast(`${emailStr} 连接成功！响应 ${d.responseTime}ms · 收件箱 ${d.inbox.total} 封`, 'success');
       } else {
+        setConnResults(prev => ({
+          ...prev,
+          [id]: {
+            success: false,
+            responseTime: result.data?.responseTime ?? 0,
+            openTime: 0,
+            serverHost: result.data?.serverHost ?? '',
+            serverPort: result.data?.serverPort ?? 0,
+            serverGreeting: '',
+            tlsStatus: result.data?.tlsStatus ?? true,
+            accountEmail: emailStr,
+            provider: 'custom',
+            inbox: { total: 0, unseen: 0 },
+            error: result.message,
+            testedAt: Date.now(),
+          },
+        }));
+        setExpandedConnId(id);
         setAccounts(prev => prev.map(acc => {
           if (acc.id === id) {
             return { ...acc, status: 'error' as const };
@@ -262,14 +397,12 @@ export default function MailAccountsView({
     }
   };
 
-  // 格式化日期
+  // 格式化日期（防御无效日期）
   const formatDate = (dateStr: string) => {
-    try {
-      const d = new Date(dateStr);
-      return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-    } catch {
-      return dateStr;
-    }
+    if (!dateStr) return '—';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
   };
 
   // 展开/收起邮件正文
@@ -309,6 +442,9 @@ export default function MailAccountsView({
 
         <button
           onClick={async () => {
+            setEditingAccountId(null);
+            setName(''); setEmail(''); setAuthCode('');
+            handleProviderSelect('qq');
             setIsModalOpen(true);
             // 加载代理列表
             try {
@@ -396,6 +532,77 @@ export default function MailAccountsView({
                   </div>
                 </div>
 
+                {/* 连通性诊断结果面板 */}
+                {connResults[acc.id] && expandedConnId === acc.id && (
+                  <div className="mt-3 rounded-md border border-[#30363D] bg-[#0D1117] overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-[#30363D]">
+                      <div className="flex items-center gap-2">
+                        <Activity className="w-3.5 h-3.5 text-blue-400" />
+                        <span className="text-[10px] font-bold text-[#8B949E] tracking-wider uppercase">连通性诊断</span>
+                      </div>
+                      <span className={'text-[9px] font-semibold px-1.5 py-0.5 rounded border ' + (
+                        connResults[acc.id].success
+                          ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
+                          : 'text-rose-400 bg-rose-500/10 border-rose-500/30'
+                      )}>
+                        {connResults[acc.id].success ? '连接正常' : '连接异常'}
+                      </span>
+                    </div>
+                    <div className="p-3 space-y-2">
+                      {/* 响应时间条 */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-slate-500">IMAP 响应时间</span>
+                        <span className={'text-[11px] font-mono font-semibold ' + (
+                          connResults[acc.id].responseTime < 1000 ? 'text-emerald-400' :
+                          connResults[acc.id].responseTime < 3000 ? 'text-amber-400' : 'text-rose-400'
+                        )}>
+                          {connResults[acc.id].responseTime}ms
+                        </span>
+                      </div>
+                      {/* INBOX 打开耗时 */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-slate-500">INBOX 打开耗时</span>
+                        <span className="text-[11px] font-mono text-slate-300">{connResults[acc.id].openTime}ms</span>
+                      </div>
+                      {/* TLS 状态 */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-slate-500">TLS 加密</span>
+                        <span className={'flex items-center gap-1 text-[10px] ' + (connResults[acc.id].tlsStatus ? 'text-emerald-400' : 'text-amber-400')}>
+                          <span className={'w-1.5 h-1.5 rounded-full ' + (connResults[acc.id].tlsStatus ? 'bg-emerald-500' : 'bg-amber-500')} />
+                          {connResults[acc.id].tlsStatus ? 'SSL/TLS' : '明文'}
+                        </span>
+                      </div>
+                      {/* 服务器信息 */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-slate-500">服务器</span>
+                        <span className="text-[10px] font-mono text-slate-300 truncate max-w-[60%] text-right">
+                          {connResults[acc.id].serverGreeting || connResults[acc.id].serverHost}
+                        </span>
+                      </div>
+                      {/* 收件箱统计 */}
+                      <div className="flex items-center justify-between pt-1.5 mt-1.5 border-t border-[#30363D]/60">
+                        <span className="text-[10px] text-slate-500">收件箱</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-400">
+                            共 <span className="text-[#E6EDF3] font-semibold font-mono">{connResults[acc.id].inbox.total}</span> 封
+                          </span>
+                          {connResults[acc.id].inbox.unseen > 0 && (
+                            <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[9px] font-semibold border border-blue-500/30">
+                              {connResults[acc.id].inbox.unseen} 未读
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {/* 错误信息 */}
+                      {connResults[acc.id].error && (
+                        <div className="pt-1.5 mt-1.5 border-t border-[#30363D]/60">
+                          <p className="text-[10px] text-rose-400 leading-relaxed">{connResults[acc.id].error}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between mt-4 pt-3 border-t border-[#30363D] text-[10px]">
                   <span className="text-[#8B949E] font-mono">
                     活跃轮询: {acc.lastChecked ? acc.lastChecked.split(' ')[1] : '从未'}
@@ -420,6 +627,14 @@ export default function MailAccountsView({
                     </button>
 
                     <button
+                      onClick={() => handleOpenEditModal(acc)}
+                      className="p-1 rounded-md border border-transparent text-slate-400 hover:text-[#58A6FF] hover:bg-blue-950/20 hover:border-blue-900/30 transition-all cursor-pointer"
+                      title="编辑邮箱"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+
+                    <button
                       onClick={() => handleDeleteAccount(acc.id, acc.email)}
                       className="p-1 rounded-md border border-transparent text-slate-400 hover:text-rose-400 hover:bg-rose-950/20 hover:border-rose-900/30 transition-all cursor-pointer"
                       title="解绑邮箱"
@@ -438,7 +653,7 @@ export default function MailAccountsView({
       <AnimatePresence>
         {isModalOpen && (
           <div className="fixed inset-0 z-50">
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-xs" onClick={() => setIsModalOpen(false)} />
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-xs" onClick={handleCloseModal} />
 
             <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
               <motion.div
@@ -449,18 +664,18 @@ export default function MailAccountsView({
               >
               <div className="p-4 border-b border-[#30363D] flex items-center justify-between">
                 <div>
-                  <h2 className="text-sm font-semibold text-[#E6EDF3] font-display">添加新邮箱网关</h2>
-                  <p className="text-[11px] text-[#8B949E] mt-0.5">系统将基于 IMAP/SMTP 建立安全连接并聚合接收流</p>
+                  <h2 className="text-sm font-semibold text-[#E6EDF3] font-display">{editingAccountId ? '编辑邮箱网关' : '添加新邮箱网关'}</h2>
+                  <p className="text-[11px] text-[#8B949E] mt-0.5">{editingAccountId ? '修改邮箱配置后将自动重启监听' : '系统将基于 IMAP/SMTP 建立安全连接并聚合接收流'}</p>
                 </div>
                 <button
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={handleCloseModal}
                   className="p-1 rounded-md text-[#8B949E] hover:text-white hover:bg-[#1F242C] transition-all cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              <form onSubmit={handleAddNewAccount} className="p-4 space-y-3.5 text-xs">
+              <form onSubmit={editingAccountId ? handleUpdateAccount : handleAddNewAccount} className="p-4 space-y-3.5 text-xs">
                 {/* Choose Provider */}
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-[#8B949E]">选择邮件服务商</label>
@@ -534,12 +749,12 @@ export default function MailAccountsView({
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <label className="text-[11px] font-semibold text-[#8B949E]">IMAP 独立授权码 / 密码</label>
-                    <span className="text-[9px] text-[#58A6FF]">非邮箱正统登录密码</span>
+                    <span className="text-[9px] text-[#58A6FF]">{editingAccountId ? '留空则不修改' : '非邮箱正统登录密码'}</span>
                   </div>
                   <input
                     type="password"
-                    required
-                    placeholder="请输入第三方登录专用专属授权密码"
+                    required={!editingAccountId}
+                    placeholder={editingAccountId ? '留空则保持原密码不变' : '请输入第三方登录专用专属授权密码'}
                     value={authCode}
                     onChange={(e) => setAuthCode(e.target.value)}
                     className="w-full px-3 py-1.5 bg-[#0D1117] border border-[#30363D] rounded text-[#C9D1D9] focus:outline-none focus:border-[#58A6FF] text-xs font-sans"
@@ -619,7 +834,7 @@ export default function MailAccountsView({
                 <div className="flex justify-end gap-2 pt-3 border-t border-[#30363D] mt-3">
                   <button
                     type="button"
-                    onClick={() => setIsModalOpen(false)}
+                    onClick={handleCloseModal}
                     className="px-3 py-1.5 rounded-md text-[#8B949E] hover:text-white bg-[#1D2128] border border-[#30363D] hover:bg-[#21262d] transition-all text-xs font-semibold cursor-pointer"
                   >
                     取消
@@ -632,11 +847,11 @@ export default function MailAccountsView({
                     {submitting ? (
                       <>
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>连接中...</span>
+                        <span>{editingAccountId ? '保存中...' : '连接中...'}</span>
                       </>
                     ) : (
                       <>
-                        <span>测试并添加守护</span>
+                        <span>{editingAccountId ? '保存修改' : '测试并添加守护'}</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </>
                     )}

@@ -156,4 +156,42 @@ async function getMe(req, res, next) {
   }
 }
 
-module.exports = { login, register, getMe };
+/**
+ * PATCH /api/auth/password
+ * 修改当前用户密码
+ */
+async function changePassword(req, res, next) {
+  try {
+    const { oldPassword, newPassword } = req.body;
+
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ error: '原密码和新密码不能为空' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: '新密码长度不能少于6位' });
+    }
+
+    const db = getDB();
+    const user = db.data.users.find(u => u.id === req.userId);
+
+    if (!user) {
+      return res.status(404).json({ error: '用户不存在' });
+    }
+
+    const isValid = await bcrypt.compare(oldPassword, user.password);
+    if (!isValid) {
+      return res.status(401).json({ error: '原密码错误' });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.updatedAt = new Date().toISOString();
+    await db.write();
+
+    res.json({ success: true, message: '密码修改成功' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { login, register, getMe, changePassword };

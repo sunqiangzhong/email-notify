@@ -36,6 +36,8 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [mailboxFilter, setMailboxFilter] = useState<string>('all')
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null)
+  const [expandedBody, setExpandedBody] = useState<string>('')
+  const [loadingBody, setLoadingBody] = useState(false)
 
   const fetchAllLogs = useCallback(async () => {
     setLoading(true)
@@ -77,6 +79,7 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
           for (const mail of result.value.data) {
             allLogs.push({
               id: mail.id,
+              uid: mail.uid,
               subject: mail.subject,
               senderName: mail.fromName || '未知',
               senderEmail: mail.fromAddress || '',
@@ -106,6 +109,41 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
   }, [triggerToast])
 
   useEffect(() => { fetchAllLogs() }, [])
+
+  // 展开/收起邮件正文（参照邮箱账户管理页的 handleToggleBody）
+  const handleToggleBody = async (log: EmailLog) => {
+    if (expandedLogId === log.id) {
+      setExpandedLogId(null)
+      setExpandedBody('')
+      return
+    }
+
+    setExpandedLogId(log.id)
+    setExpandedBody('')
+    setLoadingBody(true)
+
+    const accountId = log.toAccountId
+    const uid = log.uid
+
+    if (!accountId || uid == null) {
+      setExpandedBody(log.snippet || '（无法获取正文：缺少账户或 UID 信息）')
+      setLoadingBody(false)
+      return
+    }
+
+    try {
+      const result = await emailApi.fetchBody(accountId, uid)
+      if (result.success) {
+        setExpandedBody(result.data.text || result.data.html || '（无正文内容）')
+      } else {
+        setExpandedBody(log.snippet || '获取正文失败')
+      }
+    } catch (error: any) {
+      setExpandedBody(log.snippet || `获取失败: ${error.message}`)
+    } finally {
+      setLoadingBody(false)
+    }
+  }
 
   // 邮箱列表（去重）
   const mailboxOptions = useMemo(() => {
@@ -149,147 +187,163 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-[#E6EDF3] tracking-tight font-display">仪表盘 / Dashboard</h1>
-          <p className="text-[#8B949E] text-xs mt-0.5">实时监控邮件接收与微信推送状态</p>
-        </div>
-        <button onClick={fetchAllLogs} disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[#30363D] bg-[#161B22] text-[#C9D1D9] hover:bg-[#21262d] disabled:opacity-50 cursor-pointer">
-          <RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin text-blue-400' : '')} />
-          <span>{loading ? '加载中...' : '刷新日志'}</span>
-        </button>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {[
-          { label: '邮箱账户', value: stats.accounts, icon: <Server className="w-4 h-4 text-blue-400" />, color: 'border-blue-500/20' },
-          { label: '邮件总数', value: stats.total, icon: <Mail className="w-4 h-4 text-[#58A6FF]" />, color: 'border-[#58A6FF]/20' },
-          { label: '已推送', value: stats.forwarded, icon: <CheckCircle2 className="w-4 h-4 text-emerald-400" />, color: 'border-emerald-500/20' },
-          { label: '未配置通知', value: stats.noChannel, icon: <Inbox className="w-4 h-4 text-slate-400" />, color: 'border-slate-500/20' },
-        ].map((stat, i) => (
-          <div key={i} className={'p-3 rounded-lg border ' + stat.color + ' bg-[#161B22] flex items-center gap-3'}>
-            <div className="p-2 rounded-md bg-[#0D1117]">{stat.icon}</div>
-            <div>
-              <div className="text-lg font-bold text-[#E6EDF3] font-mono">{stat.value}</div>
-              <div className="text-[10px] text-slate-500">{stat.label}</div>
-            </div>
+    <div className="flex-1 min-h-0 flex flex-col">
+      {/* ── 固定区域：标题 / 统计 / 搜索 / 筛选 ── */}
+      <div className="shrink-0 px-4 md:px-6 pt-4 md:pt-6 space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-[#E6EDF3] tracking-tight font-display">仪表盘 / Dashboard</h1>
+            <p className="text-[#8B949E] text-xs mt-0.5">实时监控邮件接收与微信推送状态</p>
           </div>
-        ))}
-      </div>
-
-      {/* 未配置通知提示 */}
-      {!hasNotification && logs.length > 0 && (
-        <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-lg flex items-center gap-2 text-amber-400 text-xs">
-          <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>尚未配置微信通知通道，邮件接收后不会自动推送。请前往「微信通知」页面配置。</span>
-        </div>
-      )}
-
-      {/* Search & Filter */}
-      <div className="flex flex-col sm:flex-row gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-          <input type="text" placeholder="搜索主题、发件人..."
-            value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 bg-[#0D1117] border border-[#30363D] rounded-lg text-[#C9D1D9] text-xs focus:outline-none focus:border-[#58A6FF]" />
+          <button onClick={fetchAllLogs} disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[#30363D] bg-[#161B22] text-[#C9D1D9] hover:bg-[#21262d] disabled:opacity-50 cursor-pointer">
+            <RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin text-blue-400' : '')} />
+            <span>{loading ? '加载中...' : '刷新日志'}</span>
+          </button>
         </div>
 
-        {/* 邮箱筛选 */}
-        <select value={mailboxFilter} onChange={e => setMailboxFilter(e.target.value)}
-          className="px-3 py-2 bg-[#0D1117] border border-[#30363D] rounded-lg text-[#C9D1D9] text-xs focus:outline-none cursor-pointer min-w-[140px]">
-          <option value="all">全部邮箱</option>
-          {mailboxOptions.map(m => (
-            <option key={m.id} value={m.id}>{m.email}</option>
+        {/* Stats */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            { label: '邮箱账户', value: stats.accounts, icon: <Server className="w-4 h-4 text-blue-400" />, color: 'border-blue-500/20' },
+            { label: '邮件总数', value: stats.total, icon: <Mail className="w-4 h-4 text-[#58A6FF]" />, color: 'border-[#58A6FF]/20' },
+            { label: '已推送', value: stats.forwarded, icon: <CheckCircle2 className="w-4 h-4 text-emerald-400" />, color: 'border-emerald-500/20' },
+            { label: '未配置通知', value: stats.noChannel, icon: <Inbox className="w-4 h-4 text-slate-400" />, color: 'border-slate-500/20' },
+          ].map((stat, i) => (
+            <div key={i} className={'p-3 rounded-lg border ' + stat.color + ' bg-[#161B22] flex items-center gap-3'}>
+              <div className="p-2 rounded-md bg-[#0D1117]">{stat.icon}</div>
+              <div>
+                <div className="text-lg font-bold text-[#E6EDF3] font-mono">{stat.value}</div>
+                <div className="text-[10px] text-slate-500">{stat.label}</div>
+              </div>
+            </div>
           ))}
-        </select>
+        </div>
 
-        {/* 状态筛选 */}
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="px-3 py-2 bg-[#0D1117] border border-[#30363D] rounded-lg text-[#C9D1D9] text-xs focus:outline-none cursor-pointer">
-          <option value="all">全部状态</option>
-          <option value="forwarded">已推送</option>
-          <option value="no_channel">未配置</option>
-          <option value="failed">已拦截</option>
-        </select>
+        {/* 未配置通知提示 */}
+        {!hasNotification && logs.length > 0 && (
+          <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-lg flex items-center gap-2 text-amber-400 text-xs">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>尚未配置微信通知通道，邮件接收后不会自动推送。请前往「微信通知」页面配置。</span>
+          </div>
+        )}
+
+        {/* Search & Filter */}
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+            <input type="text" placeholder="搜索主题、发件人..."
+              value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-[#0D1117] border border-[#30363D] rounded-lg text-[#C9D1D9] text-xs focus:outline-none focus:border-[#58A6FF]" />
+          </div>
+
+          {/* 邮箱筛选 */}
+          <select value={mailboxFilter} onChange={e => setMailboxFilter(e.target.value)}
+            className="px-3 py-2 bg-[#0D1117] border border-[#30363D] rounded-lg text-[#C9D1D9] text-xs focus:outline-none cursor-pointer min-w-[140px]">
+            <option value="all">全部邮箱</option>
+            {mailboxOptions.map(m => (
+              <option key={m.id} value={m.id}>{m.email}</option>
+            ))}
+          </select>
+
+          {/* 状态筛选 */}
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            className="px-3 py-2 bg-[#0D1117] border border-[#30363D] rounded-lg text-[#C9D1D9] text-xs focus:outline-none cursor-pointer">
+            <option value="all">全部状态</option>
+            <option value="forwarded">已推送</option>
+            <option value="no_channel">未配置</option>
+            <option value="failed">已拦截</option>
+          </select>
+        </div>
       </div>
 
-      {/* Logs List */}
-      {loading && logs.length === 0 ? (
-        <div className="flex items-center justify-center py-16 text-[#8B949E]">
-          <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-          <span>正在加载邮件日志...</span>
-        </div>
-      ) : filteredLogs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-[#8B949E]">
-          <Mail className="w-10 h-10 mb-3 opacity-30" />
-          <span className="text-sm">暂无邮件日志</span>
-          <span className="text-xs mt-1">添加邮箱后，邮件将自动显示在这里</span>
-        </div>
-      ) : (
-        <div className="space-y-1.5">
-          <AnimatePresence>
-            {filteredLogs.map((log) => {
-              const status = statusConfig[log.forwardStatus] || statusConfig['no_channel']
-              const isExpanded = expandedLogId === log.id
-              const provider = getProvider((log as any).toAccountHost || '')
-              const pc = providerConfig[provider] || providerConfig.custom
+      {/* ── 可滚动区域：邮件列表 ── */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 md:px-6 py-4">
+        {loading && logs.length === 0 ? (
+          <div className="flex items-center justify-center py-16 text-[#8B949E]">
+            <RefreshCw className="w-5 h-5 animate-spin mr-2" />
+            <span>正在加载邮件日志...</span>
+          </div>
+        ) : filteredLogs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-[#8B949E]">
+            <Mail className="w-10 h-10 mb-3 opacity-30" />
+            <span className="text-sm">暂无邮件日志</span>
+            <span className="text-xs mt-1">添加邮箱后，邮件将自动显示在这里</span>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <AnimatePresence>
+              {filteredLogs.map((log) => {
+                const status = statusConfig[log.forwardStatus] || statusConfig['no_channel']
+                const isExpanded = expandedLogId === log.id
+                const provider = getProvider((log as any).toAccountHost || '')
+                const pc = providerConfig[provider] || providerConfig.custom
 
-              return (
-                <motion.div key={log.id} layout initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                  className="rounded-lg border border-[#30363D] bg-[#161B22] overflow-hidden">
-                  <div onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
-                    className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-[#1F242C]/50 transition-colors">
+                return (
+                  <motion.div key={log.id} layout initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                    className="rounded-lg border border-[#30363D] bg-[#161B22] overflow-hidden">
+                    <div onClick={() => handleToggleBody(log)}
+                      className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-[#1F242C]/50 transition-colors">
 
-                    {/* 邮箱图标 */}
-                    <div className={'w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ' + pc.bg}>
-                      <span className={'text-[10px] font-bold ' + pc.color}>{pc.name}</span>
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-xs text-[#E6EDF3] font-medium truncate">{log.subject}</span>
-                        <span className={'flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium border ' + status.color}>
-                          {status.icon}
-                          {status.label}
-                        </span>
+                      {/* 邮箱图标 */}
+                      <div className={'w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ' + pc.bg}>
+                        <span className={'text-[10px] font-bold ' + pc.color}>{pc.name}</span>
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-slate-500">
-                        <span className="truncate">{log.senderName}</span>
-                        <span className="shrink-0">→</span>
-                        <span className="font-mono truncate">{log.toEmail}</span>
-                      </div>
-                    </div>
 
-                    <div className="text-[10px] text-slate-500 font-mono whitespace-nowrap shrink-0">{log.receivedAt}</div>
-                    {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-500 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />}
-                  </div>
-
-                  <AnimatePresence>
-                    {isExpanded && (
-                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-                        className="overflow-hidden">
-                        <div className="px-4 py-3 border-t border-[#30363D] bg-[#0D1117] text-xs space-y-1.5">
-                          <div className="flex gap-4 text-[10px] text-slate-400">
-                            <span>发件人: <span className="text-slate-300">{log.senderEmail || log.senderName}</span></span>
-                            <span>收件箱: <span className="text-slate-300 font-mono">{log.toEmail}</span></span>
-                            {log.forwardTarget && <span>推送至: <span className="text-blue-400">{log.forwardTarget}</span></span>}
-                          </div>
-                          {log.snippet && <p className="text-slate-400 leading-relaxed">{log.snippet}</p>}
-                          {log.errorDetails && <p className="text-amber-400 text-[10px]">{log.errorDetails}</p>}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-xs text-[#E6EDF3] font-medium truncate">{log.subject}</span>
+                          <span className={'flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium border ' + status.color}>
+                            {status.icon}
+                            {status.label}
+                          </span>
                         </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
-              )
-            })}
-          </AnimatePresence>
-        </div>
-      )}
+                        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                          <span className="truncate">{log.senderName}</span>
+                          <span className="shrink-0">→</span>
+                          <span className="font-mono truncate">{log.toEmail}</span>
+                        </div>
+                      </div>
+
+                      <div className="text-[10px] text-slate-500 font-mono whitespace-nowrap shrink-0">{log.receivedAt}</div>
+                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-500 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />}
+                    </div>
+
+                    <AnimatePresence>
+                      {isExpanded && (
+                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden">
+                          <div className="px-4 py-3 border-t border-[#30363D] bg-[#0D1117] text-xs">
+                            {/* 邮件头部信息 */}
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-400 mb-3 pb-2.5 border-b border-[#30363D]/60">
+                              <span>发件人: <span className="text-slate-300">{log.senderEmail || log.senderName}</span></span>
+                              <span>收件箱: <span className="text-slate-300 font-mono">{log.toEmail}</span></span>
+                              {log.forwardTarget && <span>推送至: <span className="text-blue-400">{log.forwardTarget}</span></span>}
+                            </div>
+                            {/* 邮件正文 */}
+                            {loadingBody && expandedLogId === log.id ? (
+                              <div className="flex items-center gap-2 text-[#8B949E] py-3">
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                <span>正在加载邮件正文...</span>
+                              </div>
+                            ) : (
+                              <pre className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto font-sans">
+                                {expandedBody || log.snippet || '（无正文内容）'}
+                              </pre>
+                            )}
+                            {log.errorDetails && <p className="text-amber-400 text-[10px] mt-2 pt-2 border-t border-[#30363D]/60">{log.errorDetails}</p>}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                )
+              })}
+            </AnimatePresence>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -103,6 +103,15 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
+// 全局兜底：防止未捕获的 IMAP 错误导致进程崩溃
+process.on('uncaughtException', (err) => {
+  console.error('[SERVER] Uncaught exception (kept alive):', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[SERVER] Unhandled rejection (kept alive):', reason);
+});
+
 bootstrap();
 
 module.exports = app;

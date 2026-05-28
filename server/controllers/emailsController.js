@@ -290,6 +290,41 @@ async function fetchEmailBody(req, res, next) {
   }
 }
 
+/**
+ * GET /api/emails/stream
+ * Server-Sent Events 实时新邮件推送
+ */
+function streamNewEmails(req, res, next) {
+  try {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    // 心跳，防止连接被代理/负载均衡器断开
+    const heartbeat = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 30000);
+
+    // 监听新邮件事件，只推送给当前用户的邮件
+    const onNewEmail = (emailData) => {
+      if (emailData.userId === req.userId) {
+        res.write(`event: new_email\ndata: ${JSON.stringify(emailData)}\n\n`);
+      }
+    };
+
+    mailService.emailEmitter.on('new_email', onNewEmail);
+
+    req.on('close', () => {
+      mailService.emailEmitter.removeListener('new_email', onNewEmail);
+      clearInterval(heartbeat);
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getAccounts,
   getAccountById,
@@ -300,5 +335,6 @@ module.exports = {
   testExistingAccount,
   fetchRecentEmails,
   fetchEmailBody,
+  streamNewEmails,
   IMAP_PRESETS,
 };

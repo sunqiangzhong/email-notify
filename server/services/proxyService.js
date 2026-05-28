@@ -12,11 +12,13 @@ const config = require('../config');
  * @returns {Agent|null}
  */
 function createProxyAgent(proxyConfig) {
-  if (!proxyConfig || !proxyConfig.enabled) {
+  // 代理对象存在即视为可用（数据库中的代理对象没有 enabled 字段）
+  if (!proxyConfig) {
     return null;
   }
 
-  const { type, host, port, username, password } = proxyConfig;
+  const { type: rawType, host, port, username, password } = proxyConfig;
+  const type = (rawType || '').toUpperCase();
 
   if (!host || !port) {
     return null;
@@ -42,7 +44,7 @@ function createProxyAgent(proxyConfig) {
  * @returns {Promise<{success: boolean, latency: number|null, error?: string}>}
  */
 async function testProxyConnection(proxyConfig) {
-  if (!proxyConfig || !proxyConfig.enabled) {
+  if (!proxyConfig) {
     return { success: true, latency: null, message: '代理未启用，将直连' };
   }
 

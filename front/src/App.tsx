@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   LayoutDashboard,
   Mail,
@@ -23,6 +23,7 @@ import ProxySettingsView from './components/ProxySettingsView'
 import WeChatNotificationsView from './components/WeChatNotificationsView'
 import MultiUserManagementView from './components/MultiUserManagementView';
 import LogViewer from './components/LogViewer';
+import ProfileSettingsView from './components/ProfileSettingsView';
 import { ToastContainer, ToastItem } from './components/Toast';
 import { emailApi, proxyApi, notificationApi, MailAccountData, ProxyData, NotificationData } from './services/api'
 
@@ -58,7 +59,7 @@ function AppContent() {
   })
 
   // UI 状态
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'proxy' | 'wechat' | 'users'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'proxy' | 'wechat' | 'users' | 'profile'>('dashboard')
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
   const [currentTime, setCurrentTime] = useState<string>('')
@@ -66,17 +67,17 @@ function AppContent() {
   const [dataLoading, setDataLoading] = useState(true)
 
   // Toast 工具
-  const triggerToast = (message: string, type: ToastItem['type'] = 'success') => {
+  const triggerToast = useCallback((message: string, type: ToastItem['type'] = 'success') => {
     const id = 'toast-' + Date.now() + Math.random()
     setToasts(prev => [...prev, { id, message, type }])
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id))
     }, 4000)
-  }
+  }, [])
 
-  const removeToast = (id: string) => {
+  const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id))
-  }
+  }, [])
 
   // 时钟
   useEffect(() => {
@@ -94,6 +95,14 @@ function AppContent() {
     const interval = setInterval(updateTime, 1000)
     return () => clearInterval(interval)
   }, [])
+
+  // 辅助函数：根据 IMAP Host 判断邮箱类型
+  const getMailProvider = (host: string): 'qq' | 'gmail' | 'outlook' | 'custom' => {
+    if (host.includes('qq')) return 'qq'
+    if (host.includes('gmail')) return 'gmail'
+    if (host.includes('outlook') || host.includes('hotmail')) return 'outlook'
+    return 'custom'
+  }
 
   // 从后端加载数据
   useEffect(() => {
@@ -113,6 +122,7 @@ function AppContent() {
         if (emailsRes.status === 'fulfilled' && emailsRes.value.success) {
           const mailAccounts: MailAccount[] = emailsRes.value.data.map((e: MailAccountData) => ({
             id: e.id,
+            name: e.name,
             email: e.email,
             type: getMailProvider(e.imapHost),
             status: e.active ? 'online' : 'error',
@@ -171,13 +181,46 @@ function AppContent() {
     loadData()
   }, [isAuthenticated])
 
-  // 辅助函数：根据 IMAP Host 判断邮箱类型
-  const getMailProvider = (host: string): 'qq' | 'gmail' | 'outlook' | 'custom' => {
-    if (host.includes('qq')) return 'qq'
-    if (host.includes('gmail')) return 'gmail'
-    if (host.includes('outlook') || host.includes('hotmail')) return 'outlook'
-    return 'custom'
-  }
+  // SSE 新邮件实时推送
+  useEffect(() => {
+    if (!isAuthenticated) return
+
+    const token = localStorage.getItem('token')
+    if (!token) return
+
+    const es = new EventSource(`/api/emails/stream?token=${encodeURIComponent(token)}`)
+
+    es.addEventListener('new_email', (event) => {
+      try {
+        const emailData = JSON.parse(event.data)
+        // 弹出通知横幅
+        triggerToast(`📬 ${emailData.senderName || emailData.senderEmail}: ${emailData.subject}`, 'info')
+        // 自动刷新邮箱账户列表（静默刷新）
+        emailApi.getAll().then(res => {
+          if (res.success) {
+            const mailAccounts: MailAccount[] = res.data.map((e: MailAccountData) => ({
+              id: e.id,
+              name: e.name,
+              email: e.email,
+              type: getMailProvider(e.imapHost),
+              status: e.active ? 'online' : 'error',
+              imapHost: e.imapHost,
+              imapPort: e.imapPort,
+              ssl: e.useSSL,
+              lastChecked: e.lastSync ? new Date(e.lastSync).toLocaleString('zh-CN') : undefined
+            }))
+            setAccounts(mailAccounts)
+          }
+        }).catch(() => {})
+      } catch (e) {}
+    })
+
+    es.onerror = () => {
+      es.close()
+    }
+
+    return () => { es.close() }
+  }, [isAuthenticated, triggerToast])
 
   // 辅助函数：通知类型映射
   const mapNotificationTypeToProvider = (type: string): WeChatConfig['provider'] => {
@@ -239,7 +282,7 @@ function AppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0B] text-[#C9D1D9] flex flex-col md:flex-row antialiased font-sans">
+    <div className="h-screen bg-[#0A0A0B] text-[#C9D1D9] flex flex-col md:flex-row antialiased font-sans overflow-hidden">
       {/* Toast 通知 */}
       <ToastContainer toasts={toasts} removeToast={removeToast} />
 
@@ -330,7 +373,7 @@ function AppContent() {
               <button
                 onClick={() => {
                   setIsUserMenuOpen(false)
-                  triggerToast(`个人设置加载中...`, 'info')
+                  setActiveTab('profile')
                 }}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded hover:bg-[#1F242C] text-[#C9D1D9] hover:text-white transition-all text-left cursor-pointer"
               >
@@ -408,7 +451,7 @@ function AppContent() {
         </header>
 
         {/* 内容区域 */}
-        <div className="flex-1 p-4 md:p-6 max-w-7xl w-full mx-auto space-y-5">
+        <div className="flex-1 min-h-0 flex flex-col max-w-7xl w-full mx-auto">
           {activeTab === 'dashboard' && (
             <DashboardView
               triggerToast={triggerToast}
@@ -416,32 +459,46 @@ function AppContent() {
           )}
 
           {activeTab === 'accounts' && (
-            <MailAccountsView accounts={accounts} setAccounts={setAccounts} triggerToast={triggerToast} />
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-5">
+              <MailAccountsView accounts={accounts} setAccounts={setAccounts} triggerToast={triggerToast} />
+            </div>
           )}
 
           {activeTab === 'proxy' && (
-            <ProxySettingsView proxyConfig={proxyConfig} setProxyConfig={setProxyConfig} triggerToast={triggerToast} />
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-5">
+              <ProxySettingsView proxyConfig={proxyConfig} setProxyConfig={setProxyConfig} triggerToast={triggerToast} />
+            </div>
           )}
 
           {activeTab === 'wechat' && (
-            <WeChatNotificationsView
-              triggerToast={triggerToast}
-            />
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-5">
+              <WeChatNotificationsView
+                triggerToast={triggerToast}
+              />
+            </div>
           )}
 
           {activeTab === 'users' && (
-            <MultiUserManagementView
-              users={[currentUser]}
-              toggleUserStatus={() => {}}
-              userStats={{
-                [currentUser.id]: {
-                  accountsCount: accounts.length,
-                  logsCount: logs.length,
-                  provider: 'wecom_app'
-                }
-              }}
-              triggerToast={triggerToast}
-            />
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-5">
+              <MultiUserManagementView
+                users={[currentUser]}
+                toggleUserStatus={() => {}}
+                userStats={{
+                  [currentUser.id]: {
+                    accountsCount: accounts.length,
+                    logsCount: logs.length,
+                    provider: 'wecom_app'
+                  }
+                }}
+                triggerToast={triggerToast}
+              />
+            </div>
+          )}
+
+          {activeTab === 'profile' && (
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-5">
+              <ProfileSettingsView triggerToast={triggerToast} />
+            </div>
           )}
         </div>
       </main>

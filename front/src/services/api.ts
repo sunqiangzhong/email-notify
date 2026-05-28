@@ -98,6 +98,13 @@ export const authApi = {
   isAuthenticated: () => {
     return !!getToken();
   },
+
+  changePassword: async (oldPassword: string, newPassword: string) => {
+    return request<{ success: boolean; message: string }>('/auth/password', {
+      method: 'PATCH',
+      body: JSON.stringify({ oldPassword, newPassword }),
+    });
+  },
 };
 
 // ============ 邮箱接口 ============
@@ -162,7 +169,17 @@ export const emailApi = {
     return request<{
       success: boolean;
       message: string;
-      data?: { server: string; responseTime: number };
+      data?: {
+        responseTime: number;
+        openTime: number;
+        serverHost: string;
+        serverPort: number;
+        serverGreeting: string;
+        tlsStatus: boolean;
+        accountEmail: string;
+        provider: string;
+        inbox: { total: number; unseen: number };
+      };
     }>('/emails/test-connection', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -174,7 +191,17 @@ export const emailApi = {
     return request<{
       success: boolean;
       message: string;
-      data?: { server: string; responseTime: number };
+      data?: {
+        responseTime: number;
+        openTime: number;
+        serverHost: string;
+        serverPort: number;
+        serverGreeting: string;
+        tlsStatus: boolean;
+        accountEmail: string;
+        provider: string;
+        inbox: { total: number; unseen: number };
+      };
     }>(`/emails/${id}/test`, {
       method: 'POST',
     });

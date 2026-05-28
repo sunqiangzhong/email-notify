@@ -1,6 +1,6 @@
 /**
  * 数据库层 - 基于 lowdb 的 JSON 文件存储
- * 
+ *
  * 数据结构:
  *   users:         [{ id, username, password, name, email, avatarColor, role, disabled, status, createdAt }]
  *   accounts:      [{ id, userId, email, password, type, status, imapHost, imapPort, ssl, lastChecked, enabled }]
@@ -8,6 +8,7 @@
  *   notifications: [{ id, userId, name, type, config, active, createdAt, updatedAt }]
  *   filters:       [{ id, userId, name, emailId, notificationId, keywords, matchType, active, createdAt, updatedAt }]
  *   emailLogs:     [{ id, userId, accountId, subject, senderName, senderEmail, toEmail, receivedAt, forwardStatus, forwardTarget, errorDetails, snippet }]
+ *   accountEmails: [{ id, accountId, userId, uid, fromName, fromAddress, to, subject, date, hasAttachments, attachmentsCount, fetchedAt }]
  */
 
 const { Low } = require('lowdb');
@@ -25,6 +26,7 @@ const defaultData = {
   notifications: [],
   filters: [],
   emailLogs: [],
+  accountEmails: [],
 };
 
 async function initDB() {
