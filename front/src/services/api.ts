@@ -56,16 +56,15 @@ const request = async <T>(
 // ============ 认证接口 ============
 
 export interface LoginResponse {
-  success: boolean;
-  code: string;
-  message: string;
-  data: {
-    token: string;
-    user: {
-      id: string;
-      username: string;
-      createdAt: string;
-    };
+  token: string;
+  user: {
+    id: string;
+    username: string;
+    name: string;
+    email: string;
+    avatarColor: string;
+    role: string;
+    status: string;
   };
 }
 
@@ -75,7 +74,7 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     });
-    setToken(result.data.token);
+    setToken(result.token);
     return result;
   },
 
@@ -84,12 +83,12 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     });
-    setToken(result.data.token);
+    setToken(result.token);
     return result;
   },
 
   getMe: async () => {
-    return request<{ success: boolean; data: { id: string; username: string; createdAt: string } }>('/auth/me');
+    return request<{ id: string; username: string; name: string; email: string; avatarColor: string; role: string; status: string }>('/auth/me');
   },
 
   logout: () => {

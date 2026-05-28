@@ -13,14 +13,17 @@ version: '3.8'
 
 services:
   mul-email:
-    image: your-dockerhub-username/mul-email:latest  # 替换为你的 Docker Hub 用户名
+    image: sunqz/mul-email:1.0.0
     container_name: mul-email
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "${APP_PORT:-6000}:80"
     environment:
       - PORT=3001
       - NODE_ENV=production
+      # CORS 允许的来源，* 表示允许所有（生产环境建议设置为实际域名）
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - JWT_SECRET=${JWT_SECRET:-your-secret-key-here}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123456}

@@ -3,6 +3,10 @@
 # ============================================
 FROM node:20-alpine AS frontend-builder
 
+# 构建参数：API 基础路径（默认 /api，由 nginx 反向代理转发）
+ARG VITE_API_BASE=/api
+ENV VITE_API_BASE=$VITE_API_BASE
+
 WORKDIR /app/front
 
 # 复制依赖文件
@@ -77,6 +81,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 
 # 启动脚本
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

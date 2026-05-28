@@ -19,9 +19,10 @@ services:
     environment:
       - PORT=3001
       - NODE_ENV=production
-      - JWT_SECRET=${JWT_...e}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-here}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMI...6}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123456}
       - DATA_DIR=/app/server/data
       - TZ=Asia/Shanghai
     volumes:

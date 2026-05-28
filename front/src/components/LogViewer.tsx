@@ -37,8 +37,8 @@ export default function LogViewer() {
 
   const connectWs = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname;
-    const wsUrl = `${protocol}//${host}:3001/ws/logs`;
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/ws/logs`;
 
     try {
       const ws = new WebSocket(wsUrl);
@@ -171,7 +171,7 @@ export default function LogViewer() {
               {/* 底部 */}
               <div className="px-4 py-2 border-t border-[#30363D] bg-[#161B22] flex items-center justify-between shrink-0">
                 <span className="text-[10px] text-slate-500 font-mono">
-                  ws://{window.location.hostname}:3001/ws/logs
+                  ws://{window.location.host}/ws/logs
                 </span>
                 <button
                   onClick={() => setIsOpen(false)}

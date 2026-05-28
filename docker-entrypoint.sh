@@ -64,9 +64,11 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT
 
-# 等待任意进程退出
+# 等待任意进程退出（临时关闭 set -e，避免子进程非零退出直接终止脚本）
+set +e
 wait -n $BACKEND_PID $NGINX_PID
 EXIT_CODE=$?
+set -e
 
 echo "[EXIT] 进程退出，代码: $EXIT_CODE"
 cleanup

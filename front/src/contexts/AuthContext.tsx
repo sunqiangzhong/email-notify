@@ -8,7 +8,11 @@ import { authApi } from '../services/api';
 interface User {
   id: string;
   username: string;
-  createdAt: string;
+  name: string;
+  email: string;
+  avatarColor: string;
+  role: string;
+  status: string;
 }
 
 interface AuthContextType {
@@ -44,7 +48,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (authApi.isAuthenticated()) {
         try {
           const result = await authApi.getMe();
-          setUser(result.data);
+          setUser(result);
         } catch (error) {
           // token 无效或过期
           authApi.logout();
@@ -59,12 +63,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const login = async (username: string, password: string) => {
     const result = await authApi.login(username, password);
-    setUser(result.data.user);
+    setUser(result.user);
   };
 
   const register = async (username: string, password: string) => {
     const result = await authApi.register(username, password);
-    setUser(result.data.user);
+    setUser(result.user);
   };
 
   const logout = () => {
