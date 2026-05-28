@@ -12,6 +12,7 @@ const {
   fetchRecentEmails,
   fetchEmailBody,
   streamNewEmails,
+  liveStreamEmails,
 } = require('../controllers/emailsController');
 
 // All routes require authentication
@@ -22,6 +23,8 @@ router.post('/', createAccount);
 router.post('/test-connection', testAccount);
 // SSE 新邮件推送流（必须在 /:id 之前注册，避免 'stream' 被当作 id）
 router.get('/stream', streamNewEmails);
+// SSE 实时邮件列表流
+router.get('/live', liveStreamEmails);
 router.put('/:id', updateAccount);
 router.delete('/:id', deleteAccount);
 router.post('/:id/test', testExistingAccount);

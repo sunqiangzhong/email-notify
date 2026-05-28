@@ -210,6 +210,9 @@ async function parseAndCacheEmails(messages, account) {
 
       let fromName = '', fromAddress = '', toAddr = account.email, subject = '(无主题)', date = now;
 
+      // 缓存旧邮件时，日期解析失败用极早时间做 fallback，避免旧邮件被误排到最前面
+      const OLD_DATE_FALLBACK = '2000-01-01T00:00:00.000Z';
+
       if (Buffer.isBuffer(body) || typeof body === 'string') {
         // 原始头文本，用 simpleParser 解析
         const parsed = await simpleParser(body);
@@ -219,7 +222,7 @@ async function parseAndCacheEmails(messages, account) {
         subject = parsed.subject || '(无主题)';
         date = parsed.date instanceof Date && !isNaN(parsed.date.getTime())
           ? parsed.date.toISOString()
-          : parseEmailDate(extractSingleValue(body.date), now);
+          : parseEmailDate(extractSingleValue(body.date), OLD_DATE_FALLBACK);
       } else if (body && typeof body === 'object') {
         // imap-simple 解析后的对象格式（from/to 为字符串数组如 ["Name <email>"]）
         const from = extractFirstAddress(body.from);
@@ -243,7 +246,7 @@ async function parseAndCacheEmails(messages, account) {
 
         subject = extractSingleValue(body.subject) || '(无主题)';
         const dateStr = extractSingleValue(body.date);
-        date = parseEmailDate(dateStr, now);
+        date = parseEmailDate(dateStr, OLD_DATE_FALLBACK);
 
         if (!toAddr || toAddr === account.email) {
           toAddr = extractFirstAddress(body.to).address || account.email;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Plus,
   Mail,
@@ -89,6 +89,19 @@ export default function MailAccountsView({
 
   // 编辑模式状态
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+
+  // SSE 连接 ref
+  const emailStreamRef = useRef<EventSource | null>(null);
+
+  // 组件卸载时关闭 SSE 连接
+  useEffect(() => {
+    return () => {
+      if (emailStreamRef.current) {
+        emailStreamRef.current.close();
+        emailStreamRef.current = null;
+      }
+    };
+  }, []);
 
   // Auto-fill configuration helpers when provider changes
   const handleProviderSelect = (selected: MailProvider) => {
@@ -370,8 +383,14 @@ export default function MailAccountsView({
     }
   };
 
-  // 拉取最近邮件
+  // 拉取最近邮件（page=1 使用 SSE 实时流，其他页使用 fetch）
   const handleViewEmails = async (id: string, emailStr: string, page: number = 1) => {
+    // 关闭之前的 SSE 连接
+    if (emailStreamRef.current) {
+      emailStreamRef.current.close();
+      emailStreamRef.current = null;
+    }
+
     if (!viewingEmailId || viewingEmailId !== id) {
       setViewingEmailId(id);
       setViewingEmailName(emailStr);
@@ -379,22 +398,92 @@ export default function MailAccountsView({
     setLoadingEmails(true);
     if (page === 1) setRecentEmails([]);
 
-    try {
-      const result = await emailApi.fetchRecent(id, page, 10);
-      if (result.success) {
-        setRecentEmails(result.data);
-        setEmailPagination(result.pagination);
-        if (page === 1) {
-          triggerToast(`成功拉取 ${result.data.length} 封邮件`, 'success');
+    // 非第1页仍然使用普通 fetch
+    if (page !== 1) {
+      try {
+        const result = await emailApi.fetchRecent(id, page, 10);
+        if (result.success) {
+          setRecentEmails(result.data);
+          setEmailPagination(result.pagination);
+        } else {
+          triggerToast(`拉取失败: ${result.message}`, 'error');
         }
-      } else {
-        triggerToast(`拉取失败: ${result.message}`, 'error');
+      } catch (error: any) {
+        triggerToast(`拉取失败: ${error.message || '网络错误'}`, 'error');
+      } finally {
+        setLoadingEmails(false);
       }
+      return;
+    }
+
+    // 第1页：使用 SSE 实时流
+    const token = localStorage.getItem('token');
+    if (!token) {
+      triggerToast('未登录，无法获取邮件', 'error');
+      setLoadingEmails(false);
+      return;
+    }
+
+    try {
+      const es = new EventSource(`/api/emails/live?accountId=${encodeURIComponent(id)}&page=1&pageSize=10&token=${encodeURIComponent(token)}`);
+
+      es.addEventListener('init', (event) => {
+        try {
+          const initData = JSON.parse(event.data);
+          setRecentEmails(initData.emails || []);
+          setEmailPagination(initData.pagination || { page: 1, pageSize: 10, total: 0, totalPages: 0 });
+          setLoadingEmails(false);
+          triggerToast(`实时连接成功，共 ${initData.emails?.length || 0} 封邮件`, 'success');
+        } catch (e) {
+          console.error('解析 init 数据失败:', e);
+        }
+      });
+
+      es.addEventListener('new_email', (event) => {
+        try {
+          const newEmail = JSON.parse(event.data);
+          // 构造与列表格式一致的邮件对象，插入到列表顶部
+          const emailItem = {
+            uid: 0, // 新推送的没有 uid，用时间戳代替
+            id: newEmail.logId || `new-${Date.now()}`,
+            fromName: newEmail.senderName || '',
+            fromAddress: newEmail.senderEmail || '',
+            subject: newEmail.subject || '(无主题)',
+            snippet: newEmail.snippet || '',
+            date: newEmail.receivedAt || new Date().toISOString(),
+            hasAttachments: false,
+            attachmentsCount: 0,
+          };
+          setRecentEmails(prev => [emailItem, ...prev]);
+          setEmailPagination(prev => ({ ...prev, total: (prev.total || 0) + 1 }));
+          triggerToast(`📬 新邮件: ${newEmail.senderName || newEmail.senderEmail}`, 'info');
+        } catch (e) {
+          console.error('解析 new_email 数据失败:', e);
+        }
+      });
+
+      es.onerror = () => {
+        es.close();
+        emailStreamRef.current = null;
+        setLoadingEmails(false);
+      };
+
+      emailStreamRef.current = es;
     } catch (error: any) {
-      triggerToast(`拉取失败: ${error.message || '网络错误'}`, 'error');
-    } finally {
+      triggerToast(`连接失败: ${error.message || '网络错误'}`, 'error');
       setLoadingEmails(false);
     }
+  };
+
+  // 关闭邮件弹窗并断开 SSE
+  const closeEmailModal = () => {
+    if (emailStreamRef.current) {
+      emailStreamRef.current.close();
+      emailStreamRef.current = null;
+    }
+    setViewingEmailId(null);
+    setExpandedUid(null);
+    setExpandedBody('');
   };
 
   // 格式化日期（防御无效日期）
@@ -868,7 +957,7 @@ export default function MailAccountsView({
       <AnimatePresence>
         {viewingEmailId && (
           <div className="fixed inset-0 z-50">
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-xs" onClick={() => setViewingEmailId(null)} />
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-xs" onClick={closeEmailModal} />
 
             <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
               <motion.div
@@ -884,7 +973,7 @@ export default function MailAccountsView({
                   <p className="text-[11px] text-[#8B949E] mt-0.5">{viewingEmailName} — 最近 10 封</p>
                 </div>
                 <button
-                  onClick={() => setViewingEmailId(null)}
+                  onClick={closeEmailModal}
                   className="p-1 rounded-md text-[#8B949E] hover:text-white hover:bg-[#1F242C] transition-all cursor-pointer"
                 >
                   <X className="w-4 h-4" />

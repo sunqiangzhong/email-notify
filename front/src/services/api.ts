@@ -46,7 +46,7 @@ const request = async <T>(
     throw {
       status: response.status,
       code: data.code,
-      message: data.message,
+      message: data.error || data.message || '请求失败',
     };
   }
 

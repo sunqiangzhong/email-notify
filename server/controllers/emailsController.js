@@ -302,14 +302,63 @@ function streamNewEmails(req, res, next) {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
-    // 心跳，防止连接被代理/负载均衡器断开
-    const heartbeat = setInterval(() => {
-      res.write(': heartbeat\n\n');
-    }, 30000);
+    const heartbeat = setInterval(() => { res.write(': heartbeat\n\n'); }, 30000);
 
-    // 监听新邮件事件，只推送给当前用户的邮件
     const onNewEmail = (emailData) => {
       if (emailData.userId === req.userId) {
+        res.write(`event: new_email\ndata: ${JSON.stringify(emailData)}\n\n`);
+      }
+    };
+
+    mailService.emailEmitter.on('new_email', onNewEmail);
+
+    req.on('close', () => {
+      mailService.emailEmitter.removeListener('new_email', onNewEmail);
+      clearInterval(heartbeat);
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/emails/live?accountId=xxx&page=1&pageSize=10
+ * SSE 实时邮件列表流：打开即发送初始列表，有新邮件时自动推送
+ */
+async function liveStreamEmails(req, res, next) {
+  try {
+    const db = getDB();
+    const accountId = req.query.accountId;
+
+    if (!accountId) {
+      return res.status(400).json({ success: false, code: 'MISSING_ACCOUNT_ID', message: '缺少 accountId 参数' });
+    }
+
+    const account = db.data.accounts.find(a => a.id === accountId && a.userId === req.userId);
+    if (!account) {
+      return res.status(404).json({ success: false, code: 'EMAIL_NOT_FOUND', message: '邮箱不存在' });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = parseInt(req.query.pageSize) || 10;
+
+    // 设置 SSE 响应头
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    // 发送初始邮件列表
+    const initialData = await mailService.fetchRecent(account, page, pageSize);
+    res.write(`event: init\ndata: ${JSON.stringify(initialData)}\n\n`);
+
+    // 心跳
+    const heartbeat = setInterval(() => { res.write(': heartbeat\n\n'); }, 30000);
+
+    // 监听新邮件，只推送属于当前查看的账户
+    const onNewEmail = (emailData) => {
+      if (emailData.userId === req.userId && emailData.accountId === accountId) {
         res.write(`event: new_email\ndata: ${JSON.stringify(emailData)}\n\n`);
       }
     };
@@ -336,5 +385,6 @@ module.exports = {
   fetchRecentEmails,
   fetchEmailBody,
   streamNewEmails,
+  liveStreamEmails,
   IMAP_PRESETS,
 };
