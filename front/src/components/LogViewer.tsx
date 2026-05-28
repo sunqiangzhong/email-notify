@@ -31,50 +31,64 @@ export default function LogViewer() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [connected, setConnected] = useState(false);
   const [unread, setUnread] = useState(0);
-  const wsRef = useRef<WebSocket | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const connectWs = useCallback(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/logs`;
+  const connectSSE = useCallback(() => {
+    // 清理旧连接
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setConnected(false);
+      return;
+    }
+
+    const sseUrl = `/api/system/logs?token=${encodeURIComponent(token)}`;
 
     try {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      const es = new EventSource(sseUrl);
+      eventSourceRef.current = es;
 
-      ws.onopen = () => setConnected(true);
+      es.onopen = () => setConnected(true);
 
-      ws.onmessage = (event) => {
+      // 初始日志（缓冲区）
+      es.addEventListener('init', (event) => {
         try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'init' && Array.isArray(msg.data)) {
-            setLogs(msg.data);
-          } else if (msg.type === 'log' && msg.data) {
-            setLogs(prev => [msg.data, ...prev].slice(0, 200));
-            if (!isOpen) {
-              setUnread(prev => prev + 1);
-            }
+          const initialLogs: LogEntry[] = JSON.parse(event.data);
+          setLogs(initialLogs);
+        } catch (e) {}
+      });
+
+      // 新日志
+      es.addEventListener('log', (event) => {
+        try {
+          const entry: LogEntry = JSON.parse(event.data);
+          setLogs(prev => [entry, ...prev].slice(0, 200));
+          if (!isOpen) {
+            setUnread(prev => prev + 1);
           }
         } catch (e) {}
-      };
+      });
 
-      ws.onclose = () => {
+      es.onerror = () => {
         setConnected(false);
-        reconnectTimer.current = setTimeout(() => connectWs(), 3000);
+        es.close();
+        // EventSource 内置重连间隔太短，手动延迟重连
+        reconnectTimer.current = setTimeout(() => connectSSE(), 5000);
       };
-
-      ws.onerror = () => ws.close();
     } catch (e) {
       setConnected(false);
     }
   }, [isOpen]);
 
   useEffect(() => {
-    connectWs();
+    connectSSE();
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      if (eventSourceRef.current) eventSourceRef.current.close();
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
     };
   }, []);
@@ -120,7 +134,7 @@ export default function LogViewer() {
                     <span className="text-sm font-semibold text-[#E6EDF3] block">系统实时日志</span>
                     <span className="text-[10px] text-slate-500 flex items-center gap-1.5">
                       <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
-                      {connected ? 'WebSocket 已连接' : '未连接'}
+                      {connected ? 'SSE 已连接' : '未连接'}
                       <span className="mx-1">·</span>
                       共 {logs.length} 条
                     </span>
@@ -171,7 +185,7 @@ export default function LogViewer() {
               {/* 底部 */}
               <div className="px-4 py-2 border-t border-[#30363D] bg-[#161B22] flex items-center justify-between shrink-0">
                 <span className="text-[10px] text-slate-500 font-mono">
-                  ws://{window.location.host}/ws/logs
+                  GET /api/system/logs (text/event-stream)
                 </span>
                 <button
                   onClick={() => setIsOpen(false)}

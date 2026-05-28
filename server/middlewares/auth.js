@@ -7,12 +7,18 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 
 function authMiddleware(req, res, next) {
+  // 优先从 Authorization 头读取，其次从 query 参数读取（SSE 场景）
+  let token = null;
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: '未提供认证令牌，请先登录' });
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.query.token) {
+    token = req.query.token;
   }
 
-  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: '未提供认证令牌，请先登录' });
+  }
   try {
     const decoded = jwt.verify(token, config.jwtSecret);
     req.userId = decoded.userId;

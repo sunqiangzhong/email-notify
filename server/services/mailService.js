@@ -27,7 +27,7 @@ function buildImapConfig(account, proxyConfig) {
       password: account.password,
       host: account.imapHost,
       port: account.imapPort || 993,
-      tls: account.ssl !== false,
+      tls: account.useSSL !== false,   // 字段名是 useSSL，不是 ssl
       tlsOptions: { rejectUnauthorized: false },
       authTimeout: config.imapConnectTimeout,
       connTimeout: config.imapConnectTimeout,

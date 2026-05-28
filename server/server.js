@@ -1,3 +1,6 @@
+// 加载日志发射器（必须在所有其他模块之前，以劫持 console 方法）
+require('./services/logEmitter');
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');

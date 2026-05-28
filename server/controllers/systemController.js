@@ -7,6 +7,7 @@ const path = require('path');
 const tcpPing = require('tcp-ping');
 const config = require('../config');
 const mailService = require('../services/mailService');
+const { emitter: logEmitter, getRecentLogs } = require('../services/logEmitter');
 
 /**
  * 获取 TCP ping 延迟
@@ -142,4 +143,43 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-module.exports = { getStatus, pingDiagnostics };
+/**
+ * GET /api/system/logs
+ * Server-Sent Events 实时日志流
+ */
+function streamLogs(req, res, next) {
+  try {
+    // 设置 SSE 响应头
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // 禁用 nginx 缓冲
+    res.flushHeaders();
+
+    // 发送初始日志（最近缓冲区）
+    const recentLogs = getRecentLogs();
+    res.write(`event: init\ndata: ${JSON.stringify(recentLogs)}\n\n`);
+
+    // 监听新日志事件
+    const onLog = (entry) => {
+      res.write(`event: log\ndata: ${JSON.stringify(entry)}\n\n`);
+    };
+
+    logEmitter.on('log', onLog);
+
+    // 心跳：每 30 秒发送一次注释，防止连接被代理/负载均衡器断开
+    const heartbeat = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 30000);
+
+    // 客户端断开连接时清理
+    req.on('close', () => {
+      logEmitter.removeListener('log', onLog);
+      clearInterval(heartbeat);
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getStatus, pingDiagnostics, streamLogs };
