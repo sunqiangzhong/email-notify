@@ -3,12 +3,9 @@
  */
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
-const { testProxyConnection, testConnectivity: testConn } = require('../services/proxyService');
+const { testProxyConnection } = require('../services/proxyService');
+const { fullConnectivityTest, PRESET_TARGETS } = require('../services/connectivityService');
 
-/**
- * GET /api/proxies
- * 获取当前用户的所有代理配置
- */
 async function getProxies(req, res, next) {
   try {
     const db = getDB();
@@ -19,10 +16,6 @@ async function getProxies(req, res, next) {
   }
 }
 
-/**
- * GET /api/proxies/:id
- * 获取单个代理配置
- */
 async function getProxyById(req, res, next) {
   try {
     const db = getDB();
@@ -36,10 +29,6 @@ async function getProxyById(req, res, next) {
   }
 }
 
-/**
- * POST /api/proxies
- * 创建代理配置
- */
 async function createProxy(req, res, next) {
   try {
     const db = getDB();
@@ -71,10 +60,6 @@ async function createProxy(req, res, next) {
   }
 }
 
-/**
- * PUT /api/proxies/:id
- * 更新代理配置
- */
 async function updateProxy(req, res, next) {
   try {
     const db = getDB();
@@ -102,10 +87,6 @@ async function updateProxy(req, res, next) {
   }
 }
 
-/**
- * DELETE /api/proxies/:id
- * 删除代理配置
- */
 async function deleteProxy(req, res, next) {
   try {
     const db = getDB();
@@ -124,10 +105,6 @@ async function deleteProxy(req, res, next) {
   }
 }
 
-/**
- * POST /api/proxies/test-connectivity
- * 测试代理连通性
- */
 async function testConnectivity(req, res, next) {
   try {
     const { host, port, type } = req.body;
@@ -136,7 +113,12 @@ async function testConnectivity(req, res, next) {
       return res.status(400).json({ success: false, code: 'MISSING_FIELDS', message: '主机和端口不能为空' });
     }
 
-    const result = await testConn({ host, port, type: type || 'socks5' });
+    const targets = [...PRESET_TARGETS.network, ...PRESET_TARGETS.email];
+    const result = await fullConnectivityTest(
+      { host, port: parseInt(port), type: type || 'socks5' },
+      targets
+    );
+
     res.json({ success: true, data: result });
   } catch (err) {
     next(err);

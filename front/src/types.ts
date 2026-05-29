@@ -23,7 +23,8 @@ export interface EmailLog {
   toEmail: string;
   toAccountId?: string;
   toAccountHost?: string;
-  receivedAt: string;
+  receivedAt: string;      // 显示用（本地化格式）
+  dateRaw: string;          // 排序用（ISO 字符串，避免二次解析）
   forwardStatus: ForwardStatus;
   forwardTarget?: string;
   errorDetails?: string;

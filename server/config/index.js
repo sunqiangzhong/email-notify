@@ -11,8 +11,15 @@ module.exports = {
     email: process.env.ADMIN_EMAIL || 'admin@system.local',
   },
   dataDir: path.resolve(__dirname, '..', process.env.DATA_DIR || './data'),
-  mailPollInterval: parseInt(process.env.MAIL_POLL_INTERVAL || '60000', 10),
   corsOrigins: (process.env.CORS_ORIGINS || '*').split(',').map(s => s.trim()),
   proxyTestTimeout: parseInt(process.env.PROXY_TEST_TIMEOUT || '10000', 10),
   imapConnectTimeout: parseInt(process.env.IMAP_CONNECT_TIMEOUT || '30000', 10),
+
+  // IMAP IDLE mode config
+  // Safety poll interval (ms): fallback when IDLE disconnects, default 5 min
+  safetyPollInterval: parseInt(process.env.SAFETY_POLL_INTERVAL || '300000', 10),
+  // IDLE reissue interval (ms): re-issue IDLE before server timeout (RFC < 29 min)
+  idleReissueInterval: parseInt(process.env.IDLE_REISSUE_INTERVAL || '1740000', 10),
+  // Reconnect base delay (ms): first reconnect wait (0-5s jitter added)
+  reconnectBaseDelay: parseInt(process.env.RECONNECT_BASE_DELAY || '30000', 10),
 };

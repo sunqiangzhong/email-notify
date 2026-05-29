@@ -13,7 +13,7 @@ import {
   Unplug
 } from 'lucide-react';
 import { ProxyConfig, ProxyType } from '../types';
-import { proxyApi } from '../services/api';
+import { proxyApi, connectivityApi, ConnectivityResult } from '../services/api';
 
 interface ProxySettingsViewProps {
   proxyConfig: ProxyConfig;
@@ -31,11 +31,10 @@ export default function ProxySettingsView({
   const [serverLatency, setServerLatency] = useState<number | null | undefined>(proxyConfig.latency);
 
   // 连通性测试结果
-  const [connTestResults, setConnTestResults] = useState<Array<{
-    name: string; host: string; port: number; success: boolean; latency?: number; error?: string;
-  }>>([]);
+  const [connTestResults, setConnTestResults] = useState<ConnectivityResult[]>([]);
   const [proxyReachable, setProxyReachable] = useState<boolean | null>(null);
   const [connTesting, setConnTesting] = useState(false);
+  const [testingSite, setTestingSite] = useState<string | null>(null);
 
   const [enabled, setEnabled] = useState(proxyConfig.enabled);
   const [type, setType] = useState<ProxyType>(proxyConfig.type);
@@ -109,38 +108,72 @@ export default function ProxySettingsView({
     triggerToast(`网络通道已切换为：${newEnabled ? '全局代理路由' : '本地宿主直连'}`, 'info');
   };
 
-  // 多场景连通性测试
+  // 多场景连通性测试（测试全部）
   const runConnectivityTest = async () => {
-    if (!host || !port) {
-      triggerToast('请先填写代理地址和端口', 'warning');
-      return;
-    }
-
     setConnTesting(true);
     setConnTestResults([]);
     setProxyReachable(null);
     triggerToast('正在测试各站点连通性...', 'info');
 
     try {
-      const { proxyApi } = await import('../services/api');
-      const result = await proxyApi.testConnectivity({ host, port: parseInt(String(port)), type });
+      const proxyCfg = (enabled && host && port)
+        ? { host, port: parseInt(String(port)), type: type.toLowerCase() }
+        : undefined;
+
+      const result = await connectivityApi.testAll({
+        proxyConfig: proxyCfg,
+        categories: ['network', 'email'],
+      });
 
       if (result.success) {
-        setProxyReachable(result.data.proxy.reachable);
+        setProxyReachable(result.data.proxy?.reachable ?? null);
         setConnTestResults(result.data.targets);
 
-        const okCount = result.data.targets.filter(t => t.success).length;
-        triggerToast(
-          result.data.proxy.reachable
-            ? '代理可达，' + okCount + '/' + result.data.targets.length + ' 个站点连通'
-            : '代理不可达，结果为直连',
-          result.data.proxy.reachable ? 'success' : 'warning'
-        );
+        const s = result.data.summary;
+        const msg = result.data.proxy
+          ? (result.data.proxy.reachable
+            ? `代理可达，${s.success}/${s.total} 个站点连通`
+            : '代理不可达，以直连模式测试')
+          : `${s.success}/${s.total} 个站点连通`;
+        triggerToast(msg, s.failed === 0 ? 'success' : 'warning');
       }
     } catch (error: any) {
       triggerToast('测试失败: ' + (error.message || '网络错误'), 'error');
     } finally {
       setConnTesting(false);
+    }
+  };
+
+  // 单个站点测试（独立测试，不影响其他结果）
+  const runSingleSiteTest = async (site: { name: string; host: string; port: number }) => {
+    setTestingSite(site.host);
+    try {
+      const proxyCfg = (enabled && host && port)
+        ? { host, port: parseInt(String(port)), type: type.toLowerCase() }
+        : undefined;
+
+      const result = await connectivityApi.testOne({
+        name: site.name,
+        host: site.host,
+        port: site.port,
+        proxyConfig: proxyCfg,
+      });
+
+      if (result.success) {
+        // 只更新该站点的结果
+        setConnTestResults(prev => {
+          const filtered = prev.filter(r => r.host !== site.host);
+          return [...filtered, result.data];
+        });
+        triggerToast(
+          `${site.name}: ${result.data.success ? '连通 (' + result.data.latency + 'ms)' : '不通'}`,
+          result.data.success ? 'success' : 'warning'
+        );
+      }
+    } catch (e: any) {
+      triggerToast(`${site.name} 测试失败: ${e.message || '网络错误'}`, 'error');
+    } finally {
+      setTestingSite(null);
     }
   };
 
@@ -335,6 +368,7 @@ export default function ProxySettingsView({
               ].map((site) => {
                 const result = connTestResults.find(r => r.host === site.host);
                 const status = !result ? 'idle' : result.success ? 'ok' : 'fail';
+                const isSiteTesting = testingSite === site.host;
 
                 return (
                   <div key={site.host} className="flex items-center justify-between px-2.5 py-2 rounded bg-[#0D1117] border border-[#30363D]/50 hover:border-[#30363D] transition-colors">
@@ -357,31 +391,12 @@ export default function ProxySettingsView({
                       )}
                       <button
                         type="button"
-                        onClick={async () => {
-                          // 单个站点测试
-                          setConnTesting(true);
-                          try {
-                            const { proxyApi } = await import('../services/api');
-                            const r = await proxyApi.testConnectivity({ host, port: parseInt(String(port)), type });
-                            if (r.success) {
-                              setProxyReachable(r.data.proxy.reachable);
-                              // 只更新当前站点的结果
-                              const siteResult = r.data.targets.find(t => t.host === site.host);
-                              if (siteResult) {
-                                setConnTestResults(prev => {
-                                  const filtered = prev.filter(p => p.host !== site.host);
-                                  return [...filtered, siteResult];
-                                });
-                              }
-                            }
-                          } catch (e) {}
-                          setConnTesting(false);
-                        }}
-                        disabled={connTesting}
+                        onClick={() => runSingleSiteTest(site)}
+                        disabled={isSiteTesting || connTesting}
                         className="p-1 rounded text-slate-500 hover:text-[#58A6FF] hover:bg-[#1F242C] disabled:opacity-30 cursor-pointer"
                         title="测试此站点"
                       >
-                        <RefreshCw className={'w-3 h-3 ' + (connTesting ? 'animate-spin' : '')} />
+                        <RefreshCw className={'w-3 h-3 ' + (isSiteTesting ? 'animate-spin' : '')} />
                       </button>
                     </div>
                   </div>

@@ -29,6 +29,10 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123456}
       - DATA_DIR=/app/server/data
       - TZ=Asia/Shanghai
+      # IMAP IDLE 模式配置
+      - SAFETY_POLL_INTERVAL=${SAFETY_POLL_INTERVAL:-300000}
+      - IDLE_REISSUE_INTERVAL=${IDLE_REISSUE_INTERVAL:-1740000}
+      - RECONNECT_BASE_DELAY=${RECONNECT_BASE_DELAY:-30000}
     volumes:
       - mul-email-data:/app/server/data
     networks:

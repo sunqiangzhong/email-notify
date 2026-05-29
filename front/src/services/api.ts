@@ -474,3 +474,84 @@ export const systemApi = {
     return response.json();
   },
 };
+
+// ============ 连通性测试接口 ============
+
+export interface ConnectivityTarget {
+  name: string;
+  host: string;
+  port: number;
+  category?: string;
+}
+
+export interface ConnectivityResult {
+  name: string;
+  host: string;
+  port: number;
+  category: string;
+  success: boolean;
+  latency: number | null;
+  mode: string;
+  status?: number;
+  error?: string;
+}
+
+export interface ProxyReachResult {
+  host: string;
+  port: number;
+  type: string;
+  reachable: boolean;
+  latency: number | null;
+}
+
+export interface ConnectivityPresets {
+  email: ConnectivityTarget[];
+  notification: ConnectivityTarget[];
+  network: ConnectivityTarget[];
+}
+
+export const connectivityApi = {
+  // 获取预设测试目标
+  getPresets: async () => {
+    return request<{ success: boolean; data: ConnectivityPresets }>('/system/connectivity/presets');
+  },
+
+  // 测试单个站点
+  testOne: async (target: { host: string; port: number; name?: string; category?: string; mode?: string; timeout?: number; proxyConfig?: any }) => {
+    return request<{ success: boolean; data: ConnectivityResult }>('/system/connectivity/test', {
+      method: 'POST',
+      body: JSON.stringify(target),
+    });
+  },
+
+  // 批量测试多个站点
+  testBatch: async (params: { targets: ConnectivityTarget[]; proxyConfig?: any; mode?: string; timeout?: number }) => {
+    return request<{ success: boolean; data: ConnectivityResult[] }>('/system/connectivity/test', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+
+  // 测试全部预设站点
+  testAll: async (params?: { categories?: string[]; proxyConfig?: any; mode?: string; timeout?: number }) => {
+    return request<{
+      success: boolean;
+      data: {
+        proxy: ProxyReachResult | null;
+        targets: ConnectivityResult[];
+        summary: { total: number; success: number; failed: number; proxyUsed: boolean };
+      };
+    }>('/system/connectivity/test-all', {
+      method: 'POST',
+      body: JSON.stringify(params || {}),
+    });
+  },
+
+  // 仅测试代理可达性
+  testProxy: async (params: { host: string; port: number; type?: string; timeout?: number }) => {
+    return request<{ success: boolean; data: ProxyReachResult }>('/system/connectivity/test-proxy', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+};

@@ -76,12 +76,10 @@ async function register(req, res, next) {
 
     const db = getDB();
 
-    // Check duplicate username
     if (db.data.users.find(u => u.username === username)) {
       return res.status(409).json({ error: '用户名已存在' });
     }
 
-    // Check duplicate email
     if (email && db.data.users.find(u => u.email === email)) {
       return res.status(409).json({ error: '邮箱已被注册' });
     }
@@ -94,7 +92,7 @@ async function register(req, res, next) {
       username,
       password: hashedPassword,
       name: name || username,
-      email: email || `${username}@local`,
+      email: email || username + '@local',
       avatarColor: colors[Math.floor(Math.random() * colors.length)],
       role: 'user',
       disabled: false,
@@ -179,16 +177,15 @@ async function changePassword(req, res, next) {
       return res.status(404).json({ error: '用户不存在' });
     }
 
-    const isValid = await bcrypt.compare(oldPassword, user.password);
-    if (!isValid) {
+    const valid = await bcrypt.compare(oldPassword, user.password);
+    if (!valid) {
       return res.status(401).json({ error: '原密码错误' });
     }
 
     user.password = await bcrypt.hash(newPassword, 10);
-    user.updatedAt = new Date().toISOString();
     await db.write();
 
-    res.json({ success: true, message: '密码修改成功' });
+    res.json({ message: '密码修改成功' });
   } catch (err) {
     next(err);
   }

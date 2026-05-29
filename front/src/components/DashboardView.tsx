@@ -87,6 +87,7 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
               toAccountId: acc.id,
               toAccountHost: acc.imapHost,
               receivedAt: new Date(mail.date).toLocaleString('zh-CN'),
+              dateRaw: mail.date,  // 保留原始 ISO 字符串，用于排序
               forwardStatus: hasActiveNotif ? 'forwarded' : 'no_channel',
               forwardTarget: hasActiveNotif ? '微信通知' : undefined,
               snippet: mail.snippet || '',
@@ -95,7 +96,12 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
         }
       }
 
-      allLogs.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime())
+      allLogs.sort((a, b) => {
+        // 直接比较 ISO 时间戳，避免用本地化字符串做二次解析
+        const da = new Date(a.dateRaw).getTime();
+        const db = new Date(b.dateRaw).getTime();
+        return (isNaN(db) ? 0 : db) - (isNaN(da) ? 0 : da);
+      })
       setLogs(allLogs)
 
       if (allLogs.length > 0) {
