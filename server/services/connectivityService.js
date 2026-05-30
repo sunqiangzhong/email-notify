@@ -12,25 +12,33 @@ const net = require('net');
 const axios = require('axios');
 const { createProxyAgent } = require('./proxyService');
 
+// HTTP/HTTPS 端口列表（用 HTTP 方式测试）
+const HTTP_PORTS = new Set([80, 443, 8080, 8443, 3000, 5173, 6000]);
+
+// 邮件协议端口列表（必须用 TCP 方式测试）
+const TCP_PORTS = new Set([993, 143, 465, 587, 110, 25, 585, 995]);
+
 // ──────────────────────────────────────────────
 // 预定义测试目标
 // ──────────────────────────────────────────────
 
 const PRESET_TARGETS = {
-  // 邮件服务器
+  // 邮件服务器 - 明确指定使用 TCP 模式
   email: [
-    { name: 'QQ邮箱 IMAP', host: 'imap.qq.com', port: 993, category: 'email' },
-    { name: 'Gmail IMAP', host: 'imap.gmail.com', port: 993, category: 'email' },
-    { name: 'Outlook IMAP', host: 'imap-mail.outlook.com', port: 993, category: 'email' },
-    { name: '163邮箱 IMAP', host: 'imap.163.com', port: 993, category: 'email' },
+    { name: 'QQ邮箱 IMAP', host: 'imap.qq.com', port: 993, category: 'email', mode: 'tcp' },
+    { name: 'Gmail IMAP', host: 'imap.gmail.com', port: 993, category: 'email', mode: 'tcp' },
+    { name: 'Outlook IMAP', host: 'imap-mail.outlook.com', port: 993, category: 'email', mode: 'tcp' },
+    { name: '163邮箱 IMAP', host: 'imap.163.com', port: 993, category: 'email', mode: 'tcp' },
+    { name: 'QQ邮箱 SMTP', host: 'smtp.qq.com', port: 465, category: 'email', mode: 'tcp' },
+    { name: 'Gmail SMTP', host: 'smtp.gmail.com', port: 465, category: 'email', mode: 'tcp' },
   ],
-  // 通知服务
+  // 通知服务 - HTTP 方式测试
   notification: [
     { name: 'Server酱 API', host: 'sctapi.ftqq.com', port: 443, category: 'notification' },
     { name: '企业微信 API', host: 'qyapi.weixin.qq.com', port: 443, category: 'notification' },
     { name: 'PushDeer API', host: 'api2.pushdeer.com', port: 443, category: 'notification' },
   ],
-  // 通用网络
+  // 通用网络 - HTTP 方式测试
   network: [
     { name: 'Google', host: 'www.google.com', port: 443, category: 'network' },
     { name: 'GitHub', host: 'github.com', port: 443, category: 'network' },
@@ -142,14 +150,14 @@ async function checkHttp(host, port, proxyConfig, timeout = DEFAULT_TIMEOUT) {
  * 测试单个目标的连通性
  * 返回标准化结果格式，参照 MoviePilot 设计
  *
- * @param {object} target - {name, host, port, category?}
+ * @param {object} target - {name, host, port, category?, mode?}
  * @param {object} [options] - {proxyConfig, timeout, mode}
- *   mode: 'tcp' | 'http' | 'auto' (默认 auto = 先 tcp 再 http)
+ *   mode: 'tcp' | 'http' | 'auto' (默认 auto = 根据端口自动选择)
  * @returns {Promise<{name, host, port, category, success, latency, mode, error?}>}
  */
 async function testSingleTarget(target, options = {}) {
-  const { proxyConfig, timeout = DEFAULT_TIMEOUT, mode = 'auto' } = options;
-  const { name, host, port, category = 'custom' } = target;
+  const { proxyConfig, timeout = DEFAULT_TIMEOUT, mode: optionsMode = 'auto' } = options;
+  const { name, host, port, category = 'custom', mode: targetMode } = target;
 
   if (!host || !port) {
     return {
@@ -162,6 +170,23 @@ async function testSingleTarget(target, options = {}) {
       mode: 'tcp',
       error: '主机或端口未指定',
     };
+  }
+
+  // 确定测试模式：目标指定 > 选项指定 > 自动判断
+  let mode = targetMode || optionsMode;
+
+  // 自动模式：根据端口类型选择
+  if (mode === 'auto') {
+    if (TCP_PORTS.has(port)) {
+      // IMAP, SMTP 等邮件协议端口，强制使用 TCP 测试
+      mode = 'tcp';
+    } else if (HTTP_PORTS.has(port)) {
+      // HTTP/HTTPS 端口，使用 HTTP 测试
+      mode = 'http';
+    } else {
+      // 未知端口，默认使用 TCP 测试（更通用）
+      mode = 'tcp';
+    }
   }
 
   // TCP 模式: 仅做 socket 连通性检查
@@ -195,35 +220,17 @@ async function testSingleTarget(target, options = {}) {
     };
   }
 
-  // Auto 模式 (默认): 先 TCP 检查，成功后再做 HTTP 检查
+  // 如果指定了未知模式，回退到 TCP
   const tcpResult = await checkTcp(host, port, timeout);
-
-  if (!tcpResult.reachable) {
-    return {
-      name,
-      host,
-      port,
-      category,
-      success: false,
-      latency: null,
-      mode: 'tcp',
-      error: 'TCP 连接超时或被拒绝',
-    };
-  }
-
-  // TCP 可达，尝试 HTTP 检查
-  const httpResult = await checkHttp(host, port, proxyConfig, timeout);
-
   return {
     name,
     host,
     port,
     category,
-    success: httpResult.success,
-    latency: httpResult.latency || tcpResult.latency,
-    mode: 'http',
-    status: httpResult.status,
-    error: httpResult.error,
+    success: tcpResult.reachable,
+    latency: tcpResult.latency,
+    mode: 'tcp',
+    error: tcpResult.reachable ? undefined : 'TCP 连接超时或被拒绝',
   };
 }
 
@@ -316,4 +323,6 @@ module.exports = {
   testProxyReachability,
   fullConnectivityTest,
   PRESET_TARGETS,
+  HTTP_PORTS,
+  TCP_PORTS,
 };

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Globe,
   Wifi,
@@ -10,10 +10,14 @@ import {
   Terminal,
   Activity,
   Cpu,
-  Unplug
+  Unplug,
+  Trash2,
+  Edit2,
+  List,
+  Plus
 } from 'lucide-react';
 import { ProxyConfig, ProxyType } from '../types';
-import { proxyApi, connectivityApi, ConnectivityResult } from '../services/api';
+import { proxyApi, connectivityApi, ConnectivityResult, ProxyData } from '../services/api';
 
 interface ProxySettingsViewProps {
   proxyConfig: ProxyConfig;
@@ -30,6 +34,11 @@ export default function ProxySettingsView({
   const [saving, setSaving] = useState(false);
   const [serverLatency, setServerLatency] = useState<number | null | undefined>(proxyConfig.latency);
 
+  // 代理列表
+  const [proxyList, setProxyList] = useState<ProxyData[]>([]);
+  const [loadingProxies, setLoadingProxies] = useState(false);
+  const [deletingProxy, setDeletingProxy] = useState<string | null>(null);
+
   // 连通性测试结果
   const [connTestResults, setConnTestResults] = useState<ConnectivityResult[]>([]);
   const [proxyReachable, setProxyReachable] = useState<boolean | null>(null);
@@ -43,6 +52,74 @@ export default function ProxySettingsView({
   const [username, setUsername] = useState(proxyConfig.username || '');
   const [password, setPassword] = useState(proxyConfig.password || '');
   const [proxyId, setProxyId] = useState<string | undefined>(proxyConfig.id);
+
+  // 加载代理列表
+  useEffect(() => {
+    loadProxyList();
+  }, []);
+
+  const loadProxyList = async () => {
+    setLoadingProxies(true);
+    try {
+      const result = await proxyApi.getAll();
+      if (result.success) {
+        setProxyList(result.data);
+      }
+    } catch (error: any) {
+      console.error('加载代理列表失败:', error);
+    } finally {
+      setLoadingProxies(false);
+    }
+  };
+
+  // 删除代理
+  const handleDeleteProxy = async (proxyIdToDelete: string) => {
+    if (!confirm('确定要删除这个代理配置吗？')) {
+      return;
+    }
+
+    setDeletingProxy(proxyIdToDelete);
+    try {
+      const result = await proxyApi.delete(proxyIdToDelete);
+      if (result.success) {
+        triggerToast('代理删除成功', 'success');
+
+        // 如果删除的是当前正在编辑的代理，清空表单
+        if (proxyId === proxyIdToDelete) {
+          setProxyId(undefined);
+          setHost('');
+          setPort(0);
+          setUsername('');
+          setPassword('');
+          setProxyConfig({
+            enabled: false,
+            type: 'SOCKS5',
+            host: '',
+            port: 0,
+          });
+        }
+
+        // 重新加载列表
+        await loadProxyList();
+      }
+    } catch (error: any) {
+      triggerToast(`删除失败: ${error.message || '服务器错误'}`, 'error');
+    } finally {
+      setDeletingProxy(null);
+    }
+  };
+
+  // 编辑代理（加载到表单）
+  const handleEditProxy = (proxy: ProxyData) => {
+    setProxyId(proxy.id);
+    setType(proxy.type.toUpperCase() as ProxyType);
+    setHost(proxy.host);
+    setPort(proxy.port);
+    setUsername(proxy.username || '');
+    setPassword(proxy.password || '');
+    setEnabled(true);
+    triggerToast('已加载代理配置，可进行编辑', 'info');
+  };
 
   // Save proxy config via API
   const handleSaveConfig = async (e: React.FormEvent) => {
@@ -86,6 +163,9 @@ export default function ProxySettingsView({
         };
         setProxyConfig(updated);
         triggerToast('代理路由配置已安全保存至服务器！', 'success');
+
+        // 重新加载代理列表
+        await loadProxyList();
       }
     } catch (error: any) {
       triggerToast(`保存失败: ${error.message || '服务器错误'}`, 'error');
@@ -139,7 +219,7 @@ export default function ProxySettingsView({
 
       const result = await connectivityApi.testAll({
         proxyConfig: proxyCfg,
-        categories: ['network', 'email'],
+        categories: ['email'],
       });
 
       if (result.success) {
@@ -217,6 +297,74 @@ export default function ProxySettingsView({
           )}
         </div>
       </div>
+
+      {/* 已保存的代理列表 */}
+      {proxyList.length > 0 && (
+        <div className="p-4 rounded-lg border border-[#30363D] bg-[#161B22] space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[11px] font-bold text-[#8B949E] tracking-wider uppercase flex items-center gap-1.5">
+              <List className="w-3.5 h-3.5 text-blue-400" />
+              <span>已保存的代理配置</span>
+            </h3>
+            <button
+              type="button"
+              onClick={loadProxyList}
+              disabled={loadingProxies}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold border border-[#30363D] bg-[#0D1117] text-[#C9D1D9] hover:bg-[#1F242C] disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={'w-3 h-3 ' + (loadingProxies ? 'animate-spin' : '')} />
+              <span>刷新</span>
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {proxyList.map((proxy) => (
+              <div
+                key={proxy.id}
+                className="flex items-center justify-between p-3 rounded-md border border-[#30363D] bg-[#0D1117] hover:border-[#58A6FF] transition-colors"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-blue-600/20 flex items-center justify-center shrink-0">
+                    <Globe className="w-4 h-4 text-blue-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[12px] text-[#E6EDF3] font-medium truncate">
+                      {proxy.name || `${proxy.type.toUpperCase()} 代理`}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-mono">
+                      {proxy.type.toUpperCase()}:// {proxy.host}:{proxy.port}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleEditProxy(proxy)}
+                    className="p-1.5 rounded text-slate-500 hover:text-[#58A6FF] hover:bg-[#1F242C] cursor-pointer"
+                    title="编辑此代理"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteProxy(proxy.id)}
+                    disabled={deletingProxy === proxy.id}
+                    className="p-1.5 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 disabled:opacity-50 cursor-pointer"
+                    title="删除此代理"
+                  >
+                    {deletingProxy === proxy.id ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
         {/* Form panel */}
@@ -340,7 +488,7 @@ export default function ProxySettingsView({
                 disabled={saving}
                 className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
               >
-                {saving ? '保存中...' : '保存网络代理配置'}
+                {saving ? '保存中...' : (proxyId ? '更新代理配置' : '保存新代理配置')}
               </button>
             </div>
           </form>
@@ -376,12 +524,14 @@ export default function ProxySettingsView({
             {/* 站点列表 */}
             <div className="space-y-1">
               {[
-                { name: 'Google', host: 'google.com', port: 443 },
-                { name: 'GitHub', host: 'github.com', port: 443 },
-                { name: 'YouTube', host: 'youtube.com', port: 443 },
-                { name: 'Baidu', host: 'baidu.com', port: 443 },
+                // 邮箱 IMAP
                 { name: 'QQ邮箱 IMAP', host: 'imap.qq.com', port: 993 },
                 { name: 'Gmail IMAP', host: 'imap.gmail.com', port: 993 },
+                { name: 'Outlook IMAP', host: 'imap-mail.outlook.com', port: 993 },
+                { name: '163邮箱 IMAP', host: 'imap.163.com', port: 993 },
+                // 邮箱 SMTP
+                { name: 'QQ邮箱 SMTP', host: 'smtp.qq.com', port: 465 },
+                { name: 'Gmail SMTP', host: 'smtp.gmail.com', port: 465 },
               ].map((site) => {
                 const result = connTestResults.find(r => r.host === site.host);
                 const status = !result ? 'idle' : result.success ? 'ok' : 'fail';

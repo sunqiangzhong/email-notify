@@ -25,7 +25,14 @@ function buildImapConfig(account, proxyConfig) {
       host: account.imapHost,
       port: account.imapPort || 993,
       tls: account.useSSL !== false,
-      tlsOptions: { rejectUnauthorized: false },
+      tlsOptions: {
+        rejectUnauthorized: false,
+        // 降低 TLS 版本要求，提高兼容性
+        minVersion: 'TLSv1',
+        maxVersion: 'TLSv1.3',
+        // 增加密码套件兼容性
+        ciphers: 'DEFAULT@SECLEVEL=1',
+      },
       authTimeout: config.imapConnectTimeout,
       connTimeout: config.imapConnectTimeout,
       keepalive: {
