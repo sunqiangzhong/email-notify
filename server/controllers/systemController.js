@@ -6,7 +6,15 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const mailService = require('../services/mailService');
-const { emitter: logEmitter, getRecentLogs } = require('../services/logEmitter');
+const {
+  emitter: logEmitter,
+  getRecentLogs,
+  addFilterType,
+  removeFilterType,
+  addFilterPattern,
+  setFilterEnabled,
+  isFilterEnabled,
+} = require('../services/logEmitter');
 const { checkTcp, PRESET_TARGETS } = require('../services/connectivityService');
 
 async function getStatus(req, res, next) {
@@ -145,4 +153,40 @@ function streamLogs(req, res, next) {
   }
 }
 
-module.exports = { getStatus, pingDiagnostics, streamLogs };
+async function getLogFilterConfig(req, res, next) {
+  try {
+    res.json({
+      enabled: isFilterEnabled(),
+      // 可以添加更多配置返回
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function updateLogFilterConfig(req, res, next) {
+  try {
+    const { enabled, addTypes, removeTypes } = req.body;
+
+    if (typeof enabled === 'boolean') {
+      setFilterEnabled(enabled);
+    }
+
+    if (Array.isArray(addTypes)) {
+      addTypes.forEach(type => addFilterType(type));
+    }
+
+    if (Array.isArray(removeTypes)) {
+      removeTypes.forEach(type => removeFilterType(type));
+    }
+
+    res.json({
+      success: true,
+      enabled: isFilterEnabled(),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getStatus, pingDiagnostics, streamLogs, getLogFilterConfig, updateLogFilterConfig };

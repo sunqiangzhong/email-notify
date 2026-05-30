@@ -212,8 +212,32 @@ async function liveStreamEmails(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function reconnectAccount(req, res, next) {
+  try {
+    const db = getDB();
+    const account = db.data.accounts.find(a => a.id === req.params.id && a.userId === req.userId);
+    if (!account) return res.status(404).json({ success: false, code: 'EMAIL_NOT_FOUND', message: '邮箱不存在' });
+    await mailService.restartAccount(account.id);
+    res.json({ success: true, code: 'RECONNECTING', message: '正在重新连接 ' + account.email });
+  } catch (err) { next(err); }
+}
+
+async function syncAccount(req, res, next) {
+  try {
+    const db = getDB();
+    const account = db.data.accounts.find(a => a.id === req.params.id && a.userId === req.userId);
+    if (!account) return res.status(404).json({ success: false, code: 'EMAIL_NOT_FOUND', message: '邮箱不存在' });
+    const result = await mailService.forceSyncAccount(account);
+    res.json({
+      success: true, code: 'SYNC_COMPLETE',
+      message: '同步完成，共 ' + result.total + ' 封邮件，新增 ' + result.newCount + ' 封',
+      data: result,
+    });
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   getAccounts, getAccountById, createAccount, updateAccount, deleteAccount,
   testAccount, testExistingAccount, fetchRecentEmails, fetchEmailBody,
-  streamNewEmails, liveStreamEmails, IMAP_PRESETS,
+  streamNewEmails, liveStreamEmails, reconnectAccount, syncAccount, IMAP_PRESETS,
 };

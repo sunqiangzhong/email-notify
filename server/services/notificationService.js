@@ -52,7 +52,7 @@ function buildMessageContent(emailData, format = 'markdown') {
       `**发件人**: ${emailData.senderName} <${emailData.senderEmail}>`,
       `**收件箱**: ${emailData.toEmail}`,
       `**主 题**: ${emailData.subject}`,
-      `**时 间**: new Date(emailData.receivedAt).toLocaleString('zh-CN')`,
+      `**时 间**: ${new Date(emailData.receivedAt).toLocaleString('zh-CN')}`,
       ``,
       `---`,
       `${emailData.snippet}`,
@@ -64,7 +64,7 @@ function buildMessageContent(emailData, format = 'markdown') {
     `发件人: ${emailData.senderName} <${emailData.senderEmail}>`,
     `收件箱: ${emailData.toEmail}`,
     `主题: ${emailData.subject}`,
-    `时间: new Date(emailData.receivedAt).toLocaleString('zh-CN')`,
+    `时间: ${new Date(emailData.receivedAt).toLocaleString('zh-CN')}`,
     ``,
     emailData.snippet,
   ].join('\n');

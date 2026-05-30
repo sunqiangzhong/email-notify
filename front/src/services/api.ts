@@ -233,6 +233,15 @@ export const emailApi = {
     }>(`/emails/${id}/messages?page=${page}&pageSize=${pageSize}`);
   },
 
+  // 强制同步邮箱（重新扫描 IMAP 收件箱）
+  sync: async (id: string) => {
+    return request<{
+      success: boolean;
+      message: string;
+      data: { total: number; newCount: number };
+    }>(`/emails/${id}/sync`, { method: 'POST' });
+  },
+
   // 获取单封邮件正文
   fetchBody: async (emailId: string, uid: number) => {
     return request<{

@@ -34,6 +34,7 @@ export interface EmailLog {
 export type ProxyType = 'HTTP' | 'SOCKS5';
 
 export interface ProxyConfig {
+  id?: string; // 后端代理 ID（保存后存在）
   enabled: boolean;
   type: ProxyType;
   host: string;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   LayoutDashboard,
   Mail,
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { MailAccount, EmailLog, ProxyConfig, WeChatConfig, UserProfile } from './types'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { EmailSSEProvider, useEmailSSE, SSEEmailEvent } from './contexts/EmailSSEContext'
 import LoginPage from './components/LoginPage'
 import DashboardView from './components/DashboardView'
 import MailAccountsView from './components/MailAccountsView'
@@ -138,6 +139,7 @@ function AppContent() {
         if (proxiesRes.status === 'fulfilled' && proxiesRes.value.success && proxiesRes.value.data.length > 0) {
           const proxy = proxiesRes.value.data[0] // 取第一个代理
           setProxyConfig({
+            id: proxy.id,
             enabled: true,
             type: proxy.type.toUpperCase() as any,
             host: proxy.host,
@@ -181,46 +183,38 @@ function AppContent() {
     loadData()
   }, [isAuthenticated])
 
-  // SSE 新邮件实时推送
+  // 实时新邮件通知（通过 SSE Context）
+  const { recentEvents, isConnected } = useEmailSSE()
+  const processedEventIds = useRef<Set<string>>(new Set())
+
   useEffect(() => {
-    if (!isAuthenticated) return
+    if (recentEvents.length === 0) return
+    const latest = recentEvents[0]
+    // Only process each event once (deduplicate by logId)
+    if (processedEventIds.current.has(latest.logId)) return
+    processedEventIds.current.add(latest.logId)
 
-    const token = localStorage.getItem('token')
-    if (!token) return
+    // Toast notification
+    triggerToast(`${latest.senderName || latest.senderEmail}: ${latest.subject}`, 'info')
 
-    const es = new EventSource(`/api/emails/stream?token=${encodeURIComponent(token)}`)
-
-    es.addEventListener('new_email', (event) => {
-      try {
-        const emailData = JSON.parse(event.data)
-        // 弹出通知横幅
-        triggerToast(`📬 ${emailData.senderName || emailData.senderEmail}: ${emailData.subject}`, 'info')
-        // 自动刷新邮箱账户列表（静默刷新）
-        emailApi.getAll().then(res => {
-          if (res.success) {
-            const mailAccounts: MailAccount[] = res.data.map((e: MailAccountData) => ({
-              id: e.id,
-              name: e.name,
-              email: e.email,
-              type: getMailProvider(e.imapHost),
-              status: e.active ? 'online' : 'error',
-              imapHost: e.imapHost,
-              imapPort: e.imapPort,
-              ssl: e.useSSL,
-              lastChecked: e.lastSync ? new Date(e.lastSync).toLocaleString('zh-CN') : undefined
-            }))
-            setAccounts(mailAccounts)
-          }
-        }).catch(() => {})
-      } catch (e) {}
-    })
-
-    es.onerror = () => {
-      es.close()
-    }
-
-    return () => { es.close() }
-  }, [isAuthenticated, triggerToast])
+    // Silently refresh account list to update lastSync times
+    emailApi.getAll().then(res => {
+      if (res.success) {
+        const mailAccounts: MailAccount[] = res.data.map((e: MailAccountData) => ({
+          id: e.id,
+          name: e.name,
+          email: e.email,
+          type: getMailProvider(e.imapHost),
+          status: e.active ? 'online' : 'error',
+          imapHost: e.imapHost,
+          imapPort: e.imapPort,
+          ssl: e.useSSL,
+          lastChecked: e.lastSync ? new Date(e.lastSync).toLocaleString('zh-CN') : undefined
+        }))
+        setAccounts(mailAccounts)
+      }
+    }).catch(() => {})
+  }, [recentEvents, triggerToast])
 
   // 辅助函数：通知类型映射
   const mapNotificationTypeToProvider = (type: string): WeChatConfig['provider'] => {
@@ -446,7 +440,9 @@ function AppContent() {
 
           <div className="flex items-center gap-3">
             <LogViewer />
-            <span className="text-[11px] text-slate-400 font-mono hidden sm:inline">后端已连接</span>
+            <span className="text-[11px] text-slate-400 font-mono hidden sm:inline">
+              {isConnected ? '后端已连接 (SSE)' : '正在连接...'}
+            </span>
           </div>
         </header>
 
@@ -506,11 +502,21 @@ function AppContent() {
   )
 }
 
+// 包裹 SSE Provider，根据认证状态控制连接
+function AppWithSSE() {
+  const { isAuthenticated, isLoading } = useAuth()
+  return (
+    <EmailSSEProvider enabled={isAuthenticated && !isLoading}>
+      <AppContent />
+    </EmailSSEProvider>
+  )
+}
+
 // 根组件，包裹 AuthProvider
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <AppWithSSE />
     </AuthProvider>
   )
 }

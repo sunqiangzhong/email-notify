@@ -19,6 +19,39 @@ const _error = console.error.bind(console);
 const recentLogs = [];
 const MAX_RECENT = 200;
 
+// 日志过滤配置
+// 设置为 true 以过滤掉指定类型和模式的日志推送到前端
+const ENABLE_FILTER = true;
+
+// 过滤掉的日志类型（type 字段匹配）
+const FILTERED_TYPES = new Set([
+  // 'SYSTEM',  // 过滤 SYSTEM 类型（通常是 HTTP 请求日志）
+  // 'MAIL',    // 取消注释以过滤所有 MAIL 类型
+]);
+
+// 过滤掉的消息内容模式（正则匹配）
+const FILTERED_PATTERNS = [
+  /^\[.*\] [A-Z]+ \/.* HTTP\/\d/,  // HTTP 请求日志: [timestamp] GET /api/xxx HTTP/1.1
+  /\/api\/.*200/,                    // 带状态码的请求日志
+];
+
+/**
+ * 检查日志是否应该被过滤
+ */
+function shouldFilter(type, message) {
+  if (!ENABLE_FILTER) return false;
+
+  // 检查类型过滤
+  if (FILTERED_TYPES.has(type)) return true;
+
+  // 检查消息模式过滤
+  for (const pattern of FILTERED_PATTERNS) {
+    if (pattern.test(message)) return true;
+  }
+
+  return false;
+}
+
 /**
  * 解析日志级别：根据 console 方法或消息前缀判断
  */
@@ -76,12 +109,18 @@ function formatMessage(args) {
  * 广播一条日志
  */
 function broadcast(method, args) {
+  const type = resolveType(args);
+  const message = formatMessage(args);
+
+  // 检查是否应该过滤此日志
+  if (shouldFilter(type, message)) return;
+
   const entry = {
     id: uuidv4(),
     timestamp: new Date().toISOString(),
     level: resolveLevel(method, args),
-    type: resolveType(args),
-    message: formatMessage(args),
+    type: type,
+    message: message,
   };
 
   // 写入缓冲区
@@ -111,4 +150,10 @@ console.error = (...args) => {
 module.exports = {
   emitter,
   getRecentLogs: () => [...recentLogs],
+  // 导出过滤配置函数，方便运行时调整
+  addFilterType: (type) => FILTERED_TYPES.add(type),
+  removeFilterType: (type) => FILTERED_TYPES.delete(type),
+  addFilterPattern: (pattern) => FILTERED_PATTERNS.push(pattern),
+  setFilterEnabled: (enabled) => { ENABLE_FILTER = enabled; },
+  isFilterEnabled: () => ENABLE_FILTER,
 };

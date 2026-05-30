@@ -1,95 +1,179 @@
 /**
- * 数据库层 - 基于 lowdb 的 JSON 文件存储
+ * 数据库层 - MySQL 存储 (兼容 lowdb API)
  *
- * 数据结构:
- *   users:         [{ id, username, password, name, email, avatarColor, role, disabled, status, createdAt }]
- *   accounts:      [{ id, userId, email, password, type, status, imapHost, imapPort, ssl, lastChecked, enabled }]
- *   proxies:       [{ id, userId, name, type, host, port, username, password, createdAt, updatedAt }]
- *   notifications: [{ id, userId, name, type, config, active, createdAt, updatedAt }]
- *   filters:       [{ id, userId, name, emailId, notificationId, keywords, matchType, active, createdAt, updatedAt }]
- *   emailLogs:     [{ id, userId, accountId, subject, senderName, senderEmail, toEmail, receivedAt, forwardStatus, forwardTarget, errorDetails, snippet }]
- *   accountEmails: [{ id, accountId, userId, uid, fromName, fromAddress, to, subject, date, hasAttachments, attachmentsCount, fetchedAt }]
+ * 所有表数据加载到内存, db.data.tableName 访问, db.write() 同步到 MySQL.
+ * 并发写入通过队列串行化, 不会损坏数据.
  */
 
 const path = require('path');
 const fs = require('fs');
+const mysql = require('mysql2/promise');
 const config = require('../config');
 
-let db = null;
+const TABLES = ['users', 'accounts', 'proxies', 'notifications', 'filters', 'emailLogs', 'accountEmails'];
 
-const defaultData = {
-  users: [],
-  accounts: [],
-  proxies: [],
-  notifications: [],
-  filters: [],
-  emailLogs: [],
-  accountEmails: [],
+const JSON_COLUMNS = {
+  notifications: ['config'],
+  filters: ['keywords'],
 };
 
-async function initDB() {
-  fs.mkdirSync(config.dataDir, { recursive: true });
+let pool = null;
+let db = null;
 
-  const dbPath = path.join(config.dataDir, 'db.json');
-
-  if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify(defaultData, null, 2), 'utf-8');
-    console.log('[DB] Created new database at ' + dbPath);
+function getPool() {
+  if (!pool) {
+    pool = mysql.createPool({
+      host: process.env.MYSQL_HOST || '127.0.0.1',
+      port: parseInt(process.env.MYSQL_PORT || '3306', 10),
+      user: process.env.MYSQL_USER || 'root',
+      password: process.env.MYSQL_PASSWORD || '',
+      database: process.env.MYSQL_DATABASE || 'mul_email',
+      waitForConnections: true,
+      connectionLimit: 10,
+      charset: 'utf8mb4',
+    });
   }
+  return pool;
+}
 
-  const { Low } = await import('lowdb');
-  const { JSONFile } = await import('lowdb/node');
+// Serializes concurrent writes
+let writeQueue = Promise.resolve();
 
-  const adapter = new JSONFile(dbPath);
-  db = new Low(adapter);
-
-  await db.read();
-
-  if (!db.data) {
-    db.data = Object.assign({}, defaultData);
+function makeTracked(arr, tableName, dirtySet) {
+  const mutatingMethods = ['push', 'splice', 'pop', 'shift', 'unshift', 'sort', 'reverse', 'fill'];
+  for (const m of mutatingMethods) {
+    const original = arr[m].bind(arr);
+    arr[m] = function (...args) {
+      dirtySet.add(tableName);
+      return original(...args);
+    };
   }
+  return arr;
+}
 
-  for (const key of Object.keys(defaultData)) {
-    if (!db.data[key]) {
-      db.data[key] = defaultData[key];
-    }
-  }
-
-  if (db.data.wechatConfigs && db.data.wechatConfigs.length > 0) {
-    console.log('[DB] Migrating wechatConfigs to notifications...');
-    for (const wc of db.data.wechatConfigs) {
-      const existing = db.data.notifications.find(function(n) { return n.userId === wc.userId; });
-      if (!existing) {
-        db.data.notifications.push({
-          id: wc.id || require('uuid').v4(),
-          userId: wc.userId,
-          name: '\u4f01\u4e1a\u5fae\u4fe1\u901a\u77e5',
-          type: 'wecom_app',
-          config: {
-            corpId: '',
-            agentId: '',
-            appSecret: '',
-            webhookUrl: wc.webhookUrl || '',
-            sendKey: wc.token || '',
-          },
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
+async function initSchema() {
+  const conn = getPool();
+  const schemaPath = path.join(__dirname, 'schema.sql');
+  const schema = fs.readFileSync(schemaPath, 'utf-8');
+  // Strip comment lines first, then split by semicolons
+  const cleaned = schema.replace(/^--.*$/gm, '');
+  const statements = cleaned.split(';').map(s => s.trim()).filter(s => s.length > 0);
+  for (const stmt of statements) {
+    try {
+      await conn.query(stmt);
+    } catch (err) {
+      if (err.errno !== 1050 && !err.message.includes('Duplicate')) {
+        console.error('[DB] Schema error:', err.message);
       }
     }
-    delete db.data.wechatConfigs;
   }
+}
 
-  await db.write();
-  console.log('[DB] Loaded database from ' + dbPath);
+async function loadAll() {
+  const conn = getPool();
+  const data = {};
+  const dirty = new Set();
+  for (const table of TABLES) {
+    try {
+      const [rows] = await conn.query('SELECT * FROM `' + table + '`');
+      const jsonCols = JSON_COLUMNS[table] || [];
+      for (const row of rows) {
+        for (const col of jsonCols) {
+          if (row[col] && typeof row[col] === 'string') {
+            try { row[col] = JSON.parse(row[col]); } catch (_) {}
+          }
+        }
+      }
+      data[table] = makeTracked(rows, table, dirty);
+    } catch (err) {
+      if (err.code === 'ER_NO_SUCH_TABLE') {
+        data[table] = makeTracked([], table, dirty);
+      } else {
+        throw err;
+      }
+    }
+  }
+  return { data, dirty };
+}
+
+async function flushToMySQL(data, dirty) {
+  if (dirty.size === 0) return;
+  const conn = getPool();
+  const tablesToFlush = [...dirty];
+  dirty.clear();
+
+  for (const table of tablesToFlush) {
+    const rows = data[table];
+    const jsonCols = JSON_COLUMNS[table] || [];
+
+    if (rows.length === 0) {
+      try { await conn.query('TRUNCATE TABLE `' + table + '`'); } catch (_) {}
+      continue;
+    }
+
+    const columns = Object.keys(rows[0]);
+    const colList = columns.map(c => '`' + c + '`').join(',');
+    const chunkSize = 100;
+
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      if (chunk.length === 0) continue;
+
+      const placeholders = chunk.map(() => '(' + columns.map(() => '?').join(',') + ')').join(',');
+      const values = [];
+      for (const row of chunk) {
+        for (const col of columns) {
+          let val = row[col];
+          if (jsonCols.includes(col) && val !== null && val !== undefined) {
+            val = JSON.stringify(val);
+          }
+          values.push(val === undefined ? null : val);
+        }
+      }
+
+      try {
+        await conn.query('REPLACE INTO `' + table + '` (' + colList + ') VALUES ' + placeholders, values);
+      } catch (err) {
+        console.error('[DB] Write error for ' + table + ':', err.message);
+        dirty.add(table);
+      }
+    }
+  }
+}
+
+async function initDB() {
+  const conn = getPool();
+
+  // Wait for MySQL to be ready (retry up to 30s)
+  let ready = false;
+  for (let attempt = 1; attempt <= 30; attempt++) {
+    try {
+      await conn.query('SELECT 1');
+      ready = true;
+      break;
+    } catch (err) {
+      console.log('[DB] Waiting for MySQL... (attempt ' + attempt + '/30)');
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  if (!ready) {
+    throw new Error('MySQL not reachable after 30 attempts');
+  }
+  console.log('[DB] Connected to MySQL');
+
+  await initSchema();
+  console.log('[DB] Schema ready');
+
+  const { data, dirty } = await loadAll();
+  console.log('[DB] Loaded: ' + TABLES.map(t => t + '=' + data[t].length).join(', '));
+
+  // Build the db object that getDB() returns — same shape as lowdb
+  db = { data, write: () => flushToMySQL(data, dirty) };
   return db;
 }
 
 function getDB() {
-  if (!db) {
-    throw new Error('Database not initialized. Call initDB() first.');
-  }
+  if (!db) throw new Error('Database not initialized. Call initDB() first.');
   return db;
 }
 

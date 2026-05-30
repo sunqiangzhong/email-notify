@@ -42,6 +42,7 @@ export default function ProxySettingsView({
   const [port, setPort] = useState(proxyConfig.port);
   const [username, setUsername] = useState(proxyConfig.username || '');
   const [password, setPassword] = useState(proxyConfig.password || '');
+  const [proxyId, setProxyId] = useState<string | undefined>(proxyConfig.id);
 
   // Save proxy config via API
   const handleSaveConfig = async (e: React.FormEvent) => {
@@ -54,17 +55,27 @@ export default function ProxySettingsView({
 
     setSaving(true);
     try {
-      const result = await proxyApi.create({
+      const payload = {
         name: `代理-${type}`,
         type: type.toLowerCase() as any,
         host,
         port,
         username: username || null,
         password: password || null,
-      });
+      };
+
+      // 有 ID 用 update，没有用 create（后端 create 也已幂等）
+      const result = proxyId
+        ? await proxyApi.update(proxyId, payload)
+        : await proxyApi.create(payload);
 
       if (result.success) {
+        // 保存返回的 ID，后续更新用
+        const returnedId = result.data?.id || proxyId;
+        setProxyId(returnedId);
+
         const updated: ProxyConfig = {
+          id: returnedId,
           enabled,
           type,
           host,
@@ -89,16 +100,22 @@ export default function ProxySettingsView({
     setEnabled(newEnabled);
 
     if (newEnabled && host && port) {
-      // 启用时自动保存
+      // 启用时自动保存（后端幂等：同 host+port 只会更新，不会新建）
       try {
-        await proxyApi.create({
+        const payload = {
           name: `代理-${type}`,
           type: type.toLowerCase() as any,
           host,
           port,
           username: username || null,
           password: password || null,
-        });
+        };
+        const result = proxyId
+          ? await proxyApi.update(proxyId, payload)
+          : await proxyApi.create(payload);
+        if (result.success && result.data?.id) {
+          setProxyId(result.data.id);
+        }
       } catch (e) {
         // 忽略保存错误
       }

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react'
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import {
   Server, Mail, Send, Radio, Search, Filter, CheckCircle2, Clock,
   AlertTriangle, ChevronDown, ChevronUp, Layers, RefreshCw, Inbox
@@ -6,6 +6,7 @@ import {
 import { EmailLog, ForwardStatus } from '../types'
 import { motion, AnimatePresence } from 'motion/react'
 import { emailApi, notificationApi, MailAccountData } from '../services/api'
+import { useEmailSSE, SSEEmailEvent } from '../contexts/EmailSSEContext'
 
 interface DashboardViewProps {
   triggerToast: (msg: string, type: 'success' | 'error' | 'info' | 'warning') => void
@@ -30,6 +31,7 @@ const getProvider = (host: string): string => {
 export default function DashboardView({ triggerToast }: DashboardViewProps) {
   const [logs, setLogs] = useState<EmailLog[]>([])
   const [loading, setLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [accounts, setAccounts] = useState<MailAccountData[]>([])
   const [hasNotification, setHasNotification] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -38,6 +40,53 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null)
   const [expandedBody, setExpandedBody] = useState<string>('')
   const [loadingBody, setLoadingBody] = useState(false)
+  const [newEmailCount, setNewEmailCount] = useState(0)
+
+  // SSE 实时订阅
+  const { recentEvents, isConnected, clearRecentEvents } = useEmailSSE()
+  const processedSSEIds = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (recentEvents.length === 0) return
+
+    const newLogs: EmailLog[] = []
+    for (const evt of recentEvents) {
+      if (processedSSEIds.current.has(evt.logId)) continue
+      processedSSEIds.current.add(evt.logId)
+
+      // Look up account host from the accounts list
+      const acc = accounts.find(a => a.id === evt.accountId)
+
+      newLogs.push({
+        id: evt.logId,
+        uid: undefined,
+        subject: evt.subject,
+        senderName: evt.senderName || '未知',
+        senderEmail: evt.senderEmail || '',
+        toEmail: evt.toEmail || evt.accountEmail,
+        toAccountId: evt.accountId,
+        toAccountHost: acc?.imapHost,
+        receivedAt: new Date(evt.receivedAt).toLocaleString('zh-CN'),
+        dateRaw: evt.receivedAt,
+        forwardStatus: 'sending' as ForwardStatus,
+        snippet: evt.snippet || '',
+      })
+    }
+
+    if (newLogs.length > 0) {
+      setLogs(prev => {
+        // Deduplicate by id against existing logs
+        const existingIds = new Set(prev.map(l => l.id))
+        const unique = newLogs.filter(l => !existingIds.has(l.id))
+        if (unique.length === 0) return prev
+        return [...unique, ...prev]
+      })
+      setNewEmailCount(prev => prev + newLogs.length)
+    }
+
+    // Consume events so they aren't re-processed
+    clearRecentEvents()
+  }, [recentEvents, accounts, clearRecentEvents])
 
   const fetchAllLogs = useCallback(async () => {
     setLoading(true)
@@ -115,6 +164,45 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
   }, [triggerToast])
 
   useEffect(() => { fetchAllLogs() }, [])
+
+  // 强制同步所有邮箱账户
+  const syncAllAccounts = useCallback(async () => {
+    setSyncing(true)
+    try {
+      const emailsRes = await emailApi.getAll()
+      if (!emailsRes.success) {
+        triggerToast('获取邮箱列表失败', 'error')
+        return
+      }
+      const accs = emailsRes.data
+      const results = await Promise.allSettled(
+        accs.map(acc => emailApi.sync(acc.id))
+      )
+      let totalNew = 0
+      let failed = 0
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value.success) {
+          totalNew += r.value.data.newCount
+        } else {
+          failed++
+        }
+      }
+      if (failed > 0) {
+        triggerToast(`同步完成，${failed} 个账户同步失败`, 'warning')
+      } else if (totalNew > 0) {
+        triggerToast(`同步完成，新增 ${totalNew} 封邮件`, 'success')
+      } else {
+        triggerToast('同步完成，暂无新邮件', 'info')
+      }
+      // Refresh the log list after sync
+      await fetchAllLogs()
+    } catch (error: any) {
+      console.error('同步失败:', error)
+      triggerToast('同步失败: ' + (error.message || '未知错误'), 'error')
+    } finally {
+      setSyncing(false)
+    }
+  }, [triggerToast, fetchAllLogs])
 
   // 展开/收起邮件正文（参照邮箱账户管理页的 handleToggleBody）
   const handleToggleBody = async (log: EmailLog) => {
@@ -202,11 +290,26 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
             <h1 className="text-xl font-bold text-[#E6EDF3] tracking-tight font-display">仪表盘 / Dashboard</h1>
             <p className="text-[#8B949E] text-xs mt-0.5">实时监控邮件接收与微信推送状态</p>
           </div>
-          <button onClick={fetchAllLogs} disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[#30363D] bg-[#161B22] text-[#C9D1D9] hover:bg-[#21262d] disabled:opacity-50 cursor-pointer">
-            <RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin text-blue-400' : '')} />
-            <span>{loading ? '加载中...' : '刷新日志'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* SSE 连接状态 */}
+            <span className={'flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border ' +
+              (isConnected
+                ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
+                : 'text-amber-400 bg-amber-500/10 border-amber-500/30')}>
+              <span className={'w-1.5 h-1.5 rounded-full ' + (isConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse')} />
+              {isConnected ? 'SSE' : '连接中'}
+            </span>
+            <button onClick={syncAllAccounts} disabled={syncing || loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 disabled:opacity-50 cursor-pointer">
+              <Radio className={'w-3.5 h-3.5 ' + (syncing ? 'animate-spin' : '')} />
+              <span>{syncing ? '同步中...' : '同步邮箱'}</span>
+            </button>
+            <button onClick={fetchAllLogs} disabled={loading || syncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-[#30363D] bg-[#161B22] text-[#C9D1D9] hover:bg-[#21262d] disabled:opacity-50 cursor-pointer">
+              <RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin text-blue-400' : '')} />
+              <span>{loading ? '加载中...' : '刷新日志'}</span>
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
@@ -266,6 +369,17 @@ export default function DashboardView({ triggerToast }: DashboardViewProps) {
 
       {/* ── 可滚动区域：邮件列表 ── */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 md:px-6 py-4">
+        {/* 新邮件提示横幅 */}
+        {newEmailCount > 0 && (
+          <button
+            onClick={() => setNewEmailCount(0)}
+            className="w-full mb-3 px-4 py-2 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-medium flex items-center justify-center gap-2 hover:bg-blue-500/20 transition-colors cursor-pointer"
+          >
+            <Mail className="w-3.5 h-3.5" />
+            收到 {newEmailCount} 封新邮件，已自动添加到列表
+          </button>
+        )}
+
         {loading && logs.length === 0 ? (
           <div className="flex items-center justify-center py-16 text-[#8B949E]">
             <RefreshCw className="w-5 h-5 animate-spin mr-2" />

@@ -22,4 +22,6 @@ module.exports = {
   idleReissueInterval: parseInt(process.env.IDLE_REISSUE_INTERVAL || '1740000', 10),
   // Reconnect base delay (ms): first reconnect wait (0-5s jitter added)
   reconnectBaseDelay: parseInt(process.env.RECONNECT_BASE_DELAY || '30000', 10),
+  // Background sync interval (ms): periodically re-scan INBOX as IDLE fallback, 0 to disable
+  backgroundSyncInterval: parseInt(process.env.BACKGROUND_SYNC_INTERVAL || '0', 10),
 };

@@ -15,6 +15,7 @@ const OLD_DATE_FALLBACK = '2000-01-01T00:00:00.000Z';
 const connectionPool = new Map();
 const emailEmitter = new EventEmitter();
 emailEmitter.setMaxListeners(50);
+let backgroundSyncTimer = null;
 
 function buildImapConfig(account, proxyConfig) {
   const imapConfig = {
@@ -29,7 +30,7 @@ function buildImapConfig(account, proxyConfig) {
       connTimeout: config.imapConnectTimeout,
       keepalive: {
         idleInterval: config.idleReissueInterval || 1740000,
-        forceNoop: true,
+        forceNoop: false,
       },
     },
   };
@@ -43,9 +44,14 @@ function buildImapConfig(account, proxyConfig) {
 function getProxyForAccount(account) {
   const db = getDB();
   if (account.useProxy && account.proxyId) {
-    return db.data.proxies.find(p => p.id === account.proxyId) || null;
+    const proxy = db.data.proxies.find(p => p.id === account.proxyId);
+    if (proxy) {
+      console.log('[MAIL] Using explicit proxy for ' + account.email + ': ' + proxy.name + ' (' + proxy.type + '://' + proxy.host + ':' + proxy.port + ')');
+    }
+    return proxy || null;
   }
-  return db.data.proxies.find(p => p.userId === account.userId) || null;
+  // useProxy=false: do NOT silently fall back to a user-level proxy
+  return null;
 }
 
 function extractFirstAddress(field) {
@@ -378,9 +384,17 @@ async function connectAndIdle(account) {
     });
     console.log('[MAIL-IDLE] ' + account.email + ': IDLE active, safety poll every ' + Math.round(safetyInterval / 1000) + 's');
   } catch (err) {
-    console.error('[MAIL-IDLE] Failed to connect to ' + account.email + ':', err.message);
+    const errMsg = err.message || String(err);
+    const isAuth = errMsg.includes('Invalid credentials') || errMsg.includes('AUTHENTICATE') || errMsg.includes('auth') || errMsg.includes('LOGIN');
+    const isTimeout = errMsg.includes('timeout') || errMsg.includes('ETIMEDOUT') || errMsg.includes('ECONNREFUSED');
+    const isTls = errMsg.includes('SSL') || errMsg.includes('TLS') || errMsg.includes('certificate');
+    let hint = '';
+    if (isAuth) hint = ' → 请检查授权码/密码是否正确';
+    else if (isTimeout) hint = ' → 连接超时，请检查网络或配置代理';
+    else if (isTls) hint = ' → TLS/SSL 错误，请检查 SSL 设置';
+    console.error('[MAIL-IDLE] Failed to connect to ' + account.email + ': ' + errMsg + hint);
     const dbAccount = db.data.accounts.find(a => a.id === account.id);
-    if (dbAccount) { dbAccount.status = 'error'; await db.write(); }
+    if (dbAccount) { dbAccount.status = 'error'; dbAccount.lastError = errMsg; await db.write(); }
     scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
   }
 }
@@ -390,9 +404,28 @@ async function startAll() {
   const activeAccounts = db.data.accounts.filter(a => a.active !== false);
   console.log('[MAIL-IDLE] Starting ' + activeAccounts.length + ' email IDLE connections...');
   for (const account of activeAccounts) await connectAndIdle(account);
+
+  // Background sync: periodically re-scan all accounts as a fallback for IDLE failures
+  const syncInterval = typeof config.backgroundSyncInterval === 'number' ? config.backgroundSyncInterval : 120000;
+  if (syncInterval > 0) {
+    backgroundSyncTimer = setInterval(async () => {
+      const db2 = getDB();
+      const accounts = db2.data.accounts.filter(a => a.active !== false);
+      for (const account of accounts) {
+        try {
+          await forceSyncAccount(account);
+        } catch (_) { /* logged inside forceSyncAccount */ }
+      }
+    }, syncInterval);
+    console.log('[MAIL-SYNC] Background sync enabled, interval=' + Math.round(syncInterval / 1000) + 's');
+  }
 }
 
 async function stopAll() {
+  if (backgroundSyncTimer) {
+    clearInterval(backgroundSyncTimer);
+    backgroundSyncTimer = null;
+  }
   console.log('[MAIL-IDLE] Stopping all connections (' + connectionPool.size + ' active)...');
   for (const [accountId, pool] of connectionPool) {
     try {
@@ -520,16 +553,90 @@ async function fetchBody(account, uid) {
 
 function getPoolStatus() {
   const status = {};
+  const db = getDB();
   for (const [id, pool] of connectionPool) {
     status[id] = {
       email: pool.account.email, status: pool.status,
       mode: 'IDLE', processedCount: pool.processedUIDs ? pool.processedUIDs.size : 0,
     };
   }
+  // Include accounts not in pool (e.g. error/reconnecting) with lastError
+  for (const account of db.data.accounts) {
+    if (!status[account.id] && account.active !== false) {
+      status[account.id] = {
+        email: account.email, status: account.status || 'unknown',
+        mode: 'disconnected', processedCount: 0,
+        lastError: account.lastError || null,
+      };
+    }
+  }
   return status;
+}
+
+/**
+ * Force re-scan an account's INBOX and update the cache.
+ * Returns { total, newCount } so the caller can report the result.
+ */
+async function forceSyncAccount(account) {
+  const db = getDB();
+  const proxyConfig = getProxyForAccount(account);
+  let connection;
+  try {
+    console.log('[MAIL-SYNC] Force sync started for ' + account.email);
+    const imapConfig = buildImapConfig(account, proxyConfig);
+    connection = await imaps.connect(imapConfig);
+    await connection.openBox('INBOX');
+
+    const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false, struct: true };
+    const messages = await connection.search(['ALL'], fetchOptions);
+
+    const existingUIDs = new Set(
+      db.data.accountEmails
+        .filter(e => e.accountId === account.id)
+        .map(e => e.uid)
+    );
+    const newMessages = messages.filter(m => !existingUIDs.has(m.attributes.uid));
+
+    if (newMessages.length > 0) {
+      console.log('[MAIL-SYNC] ' + account.email + ': Found ' + newMessages.length + ' new emails to cache');
+      // Process each new message: write to emailLogs, emit SSE, send notifications
+      const processedUIDs = new Set([...existingUIDs]);
+      for (const msg of newMessages) {
+        await processNewMessage(msg, account, processedUIDs);
+      }
+      // Also update accountEmails cache
+      await parseAndCacheEmails(newMessages, account);
+    }
+
+    // Update account status
+    const dbAccount = db.data.accounts.find(a => a.id === account.id);
+    if (dbAccount) {
+      dbAccount.status = 'online';
+      dbAccount.lastSync = new Date().toISOString();
+      dbAccount.lastError = null;
+      await db.write();
+    }
+
+    const total = db.data.accountEmails.filter(e => e.accountId === account.id).length;
+    console.log('[MAIL-SYNC] ' + account.email + ': Sync complete — ' + total + ' total, ' + newMessages.length + ' new');
+    return { total, newCount: newMessages.length };
+  } catch (err) {
+    console.error('[MAIL-SYNC] Force sync failed for ' + account.email + ':', err.message);
+    const dbAccount = db.data.accounts.find(a => a.id === account.id);
+    if (dbAccount) {
+      dbAccount.status = 'error';
+      dbAccount.lastError = err.message;
+      await db.write();
+    }
+    throw err;
+  } finally {
+    if (connection) {
+      try { connection.end(); } catch (_) {}
+    }
+  }
 }
 
 module.exports = {
   startAll, stopAll, testConnection, restartAccount,
-  fetchRecent, fetchBody, getPoolStatus, emailEmitter,
+  fetchRecent, fetchBody, getPoolStatus, forceSyncAccount, emailEmitter,
 };

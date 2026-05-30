@@ -27,11 +27,15 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use((req, _res, next) => {
-  const ts = new Date().toISOString();
-  console.log('[' + ts + '] ' + req.method + ' ' + req.url);
-  next();
-});
+// HTTP 请求日志（可通过环境变量 LOG_HTTP_REQUESTS=true 开启）
+const LOG_HTTP_REQUESTS = process.env.LOG_HTTP_REQUESTS === 'true';
+if (LOG_HTTP_REQUESTS) {
+  app.use((req, _res, next) => {
+    const ts = new Date().toISOString();
+    console.log('[' + ts + '] ' + req.method + ' ' + req.url);
+    next();
+  });
+}
 
 app.use('/api/auth', authRoutes);
 app.use('/api/emails', emailsRoutes);

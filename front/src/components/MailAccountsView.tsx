@@ -218,6 +218,14 @@ export default function MailAccountsView({
     }
   };
 
+  // 根据 IMAP Host 判断 provider
+  const detectProvider = (host: string): MailProvider => {
+    if (host.includes('qq')) return 'qq';
+    if (host.includes('gmail')) return 'gmail';
+    if (host.includes('outlook') || host.includes('hotmail')) return 'outlook';
+    return 'custom';
+  };
+
   // 打开编辑弹窗，预填表单
   const handleOpenEditModal = async (acc: MailAccount) => {
     setEditingAccountId(acc.id);
@@ -227,12 +235,34 @@ export default function MailAccountsView({
     setImapHost(acc.imapHost);
     setImapPort(acc.imapPort);
     setSsl(acc.ssl);
-    // 加载代理列表
+
+    // 根据 IMAP Host 设置正确的 provider
+    const detectedProvider = detectProvider(acc.imapHost);
+    setProvider(detectedProvider);
+
+    // 加载完整账户数据（包含 useProxy、proxyId）
     try {
-      const { proxyApi } = await import('../services/api');
-      const res = await proxyApi.getAll();
-      if (res.success) setProxyList(res.data);
-    } catch (e) {}
+      const [accountRes, proxyRes] = await Promise.all([
+        emailApi.getById(acc.id),
+        (await import('../services/api')).proxyApi.getAll(),
+      ]);
+
+      if (proxyRes.success) setProxyList(proxyRes.data);
+
+      if (accountRes.success) {
+        const fullAccount = accountRes.data;
+        setUseProxy(fullAccount.useProxy || false);
+        if (fullAccount.useProxy && fullAccount.proxyId) {
+          setSelectedProxyId(fullAccount.proxyId);
+        } else {
+          setSelectedProxyId('');
+        }
+      }
+    } catch (e) {
+      setUseProxy(false);
+      setSelectedProxyId('');
+    }
+
     setIsModalOpen(true);
   };
 
@@ -291,6 +321,8 @@ export default function MailAccountsView({
     setIsModalOpen(false);
     setEditingAccountId(null);
     setName(''); setEmail(''); setAuthCode('');
+    setUseProxy(false);
+    setSelectedProxyId('');
     handleProviderSelect('qq');
   };
 
@@ -533,6 +565,8 @@ export default function MailAccountsView({
           onClick={async () => {
             setEditingAccountId(null);
             setName(''); setEmail(''); setAuthCode('');
+            setUseProxy(false);
+            setSelectedProxyId('');
             handleProviderSelect('qq');
             setIsModalOpen(true);
             // 加载代理列表

@@ -26,10 +26,11 @@ function createProxyAgent(proxyConfig) {
   let proxyUrl;
   const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password || '')}@` : '';
 
-  if (type === 'SOCKS5') {
-    proxyUrl = `socks5://${auth}${host}:${port}`;
+  if (type === 'SOCKS5' || type === 'SOCKS4') {
+    const scheme = type === 'SOCKS4' ? 'socks4' : 'socks5';
+    proxyUrl = `${scheme}://${auth}${host}:${port}`;
     return new SocksProxyAgent(proxyUrl);
-  } else if (type === 'HTTP') {
+  } else if (type === 'HTTP' || type === 'HTTPS') {
     proxyUrl = `http://${auth}${host}:${port}`;
     return new HttpsProxyAgent(proxyUrl);
   }

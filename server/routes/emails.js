@@ -13,6 +13,8 @@ const {
   fetchEmailBody,
   streamNewEmails,
   liveStreamEmails,
+  reconnectAccount,
+  syncAccount,
 } = require('../controllers/emailsController');
 
 // All routes require authentication
@@ -28,6 +30,8 @@ router.get('/live', liveStreamEmails);
 router.put('/:id', updateAccount);
 router.delete('/:id', deleteAccount);
 router.post('/:id/test', testExistingAccount);
+router.post('/:id/reconnect', reconnectAccount);
+router.post('/:id/sync', syncAccount);
 router.get('/:id/messages', fetchRecentEmails);
 router.get('/:id/messages/:uid/body', fetchEmailBody);
 
