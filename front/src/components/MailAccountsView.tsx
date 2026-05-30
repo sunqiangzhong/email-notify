@@ -474,20 +474,37 @@ export default function MailAccountsView({
       es.addEventListener('new_email', (event) => {
         try {
           const newEmail = JSON.parse(event.data);
-          // 构造与列表格式一致的邮件对象，插入到列表顶部
-          const emailItem = {
-            uid: 0, // 新推送的没有 uid，用时间戳代替
-            id: newEmail.logId || `new-${Date.now()}`,
-            fromName: newEmail.senderName || '',
-            fromAddress: newEmail.senderEmail || '',
-            subject: newEmail.subject || '(无主题)',
-            snippet: newEmail.snippet || '',
-            date: newEmail.receivedAt || new Date().toISOString(),
-            hasAttachments: false,
-            attachmentsCount: 0,
-          };
-          setRecentEmails(prev => [emailItem, ...prev]);
-          setEmailPagination(prev => ({ ...prev, total: (prev.total || 0) + 1 }));
+          // 用 uid 去重：如果列表中已有相同 uid 的邮件，不重复插入
+          if (newEmail.uid && newEmail.uid > 0) {
+            setRecentEmails(prev => {
+              // 检查是否已存在（按 uid 或 emailId 去重）
+              const exists = prev.some(e =>
+                (e.uid && e.uid === newEmail.uid) ||
+                (newEmail.emailId && e.id === newEmail.emailId)
+              );
+              if (exists) return prev;
+              const emailItem = {
+                uid: newEmail.uid,
+                id: newEmail.emailId || newEmail.logId || `new-${Date.now()}`,
+                fromName: newEmail.senderName || '',
+                fromAddress: newEmail.senderEmail || '',
+                subject: newEmail.subject || '(无主题)',
+                snippet: newEmail.snippet || '',
+                date: newEmail.receivedAt || new Date().toISOString(),
+                hasAttachments: false,
+                attachmentsCount: 0,
+              };
+              return [emailItem, ...prev];
+            });
+          } else {
+            // 没有 uid 时直接从 API 重新拉取
+            emailApi.fetchRecent(newEmail.accountId, 1, 10).then(result => {
+              if (result.success) {
+                setRecentEmails(result.data);
+                setEmailPagination(result.pagination);
+              }
+            });
+          }
           triggerToast(`📬 新邮件: ${newEmail.senderName || newEmail.senderEmail}`, 'info');
         } catch (e) {
           console.error('解析 new_email 数据失败:', e);

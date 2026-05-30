@@ -1,0 +1,48 @@
+# ============================================
+# Mul-Email All-in-One (单容器版本)
+# ============================================
+# MySQL + Node.js + Nginx 合并到一个容器
+#
+# 使用方式:
+#   docker-compose -f docker-compose.allinone.yml up -d
+# ============================================
+
+version: '3.8'
+
+services:
+  mul-email:
+    build:
+      context: .
+      dockerfile: Dockerfile.allinone
+    image: sunqz/mul-email:allinone-latest
+    container_name: mul-email-allinone
+    restart: unless-stopped
+    ports:
+      - "5111:80"
+    environment:
+      - PORT=3001
+      - NODE_ENV=production
+      - JWT_SECRET=your_random_secret_key_here
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=admin123
+      - TZ=Asia/Shanghai
+      # MySQL 配置（内置）
+      - MYSQL_ROOT_PASSWORD=mul_email_pass
+      - MYSQL_PASSWORD=mul_email_pass
+      - MYSQL_DATABASE=mul_email
+      - MYSQL_HOST=127.0.0.1
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      # IMAP IDLE 配置
+      - SAFETY_POLL_INTERVAL=300000
+      - IDLE_REISSUE_INTERVAL=1740000
+      - RECONNECT_BASE_DELAY=30000
+    volumes:
+      - /vol1/1000/docker/mul-email/mysql:/var/lib/mysql        # MySQL 数据持久化
+      - /vol1/1000/docker/mul-email/data:/app/server/data       # 应用数据持久化
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s

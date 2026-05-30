@@ -230,7 +230,8 @@ function reconstructRawHeader(body) {
 
 async function processNewMessage(msg, account, processedUIDs) {
   const db = getDB();
-  processedUIDs.add(msg.attributes.uid);
+  const uid = msg.attributes.uid;
+  processedUIDs.add(uid);
   const all = msg.parts.find(p => p.which === '');
   if (!all) return;
   const parsed = await simpleParser(all.body);
@@ -240,6 +241,7 @@ async function processNewMessage(msg, account, processedUIDs) {
     ? parsed.date.toISOString()
     : parseEmailDate(parsed.headers?.get('date')?.toString(), new Date().toISOString());
   const emailData = {
+    uid,
     subject: parsed.subject || '(no subject)',
     senderName: from.name || from.address || 'unknown',
     senderEmail: from.address || 'unknown',
@@ -258,9 +260,14 @@ async function processNewMessage(msg, account, processedUIDs) {
   db.data.emailLogs.push(logEntry);
   await db.write();
   processNotification(account.userId, emailData, logEntry.id);
+
+  // 从缓存中查找该邮件的完整 ID（用于前端去重）
+  const cachedEmail = db.data.accountEmails.find(e => e.accountId === account.id && e.uid === uid);
+
   emailEmitter.emit('new_email', {
     userId: account.userId, accountId: account.id, accountEmail: account.email,
-    logId: logEntry.id, subject: emailData.subject, senderName: emailData.senderName,
+    uid, logId: logEntry.id, emailId: cachedEmail?.id || null,
+    subject: emailData.subject, senderName: emailData.senderName,
     senderEmail: emailData.senderEmail, toEmail: emailData.toEmail,
     receivedAt: emailData.receivedAt, snippet: emailData.snippet,
   });
@@ -341,8 +348,11 @@ async function connectAndIdle(account) {
         const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false, struct: true };
         const messages = await connection.search(['ALL'], fetchOptions);
         const newMessages = messages.filter(m => !processedUIDs.has(m.attributes.uid));
-        for (const msg of newMessages) await processNewMessage(msg, account, processedUIDs);
-        if (newMessages.length > 0) await parseAndCacheEmails(newMessages, account);
+        if (newMessages.length > 0) {
+          // 先更新缓存，再发通知（确保 SSE 推送时数据已就绪）
+          await parseAndCacheEmails(newMessages, account);
+          for (const msg of newMessages) await processNewMessage(msg, account, processedUIDs);
+        }
         const dbAcc = db.data.accounts.find(a => a.id === account.id);
         if (dbAcc) { dbAcc.lastSync = new Date().toISOString(); await db.write(); }
       } catch (err) {
@@ -375,8 +385,8 @@ async function connectAndIdle(account) {
         const newMessages = messages.filter(m => !processedUIDs.has(m.attributes.uid));
         if (newMessages.length > 0) {
           console.log('[MAIL-IDLE] Safety poll found ' + newMessages.length + ' new message(s) for ' + account.email);
-          for (const msg of newMessages) await processNewMessage(msg, account, processedUIDs);
           await parseAndCacheEmails(newMessages, account);
+          for (const msg of newMessages) await processNewMessage(msg, account, processedUIDs);
         }
         const dbAcc = db.data.accounts.find(a => a.id === account.id);
         if (dbAcc) { dbAcc.lastSync = new Date().toISOString(); await db.write(); }
@@ -606,13 +616,12 @@ async function forceSyncAccount(account) {
 
     if (newMessages.length > 0) {
       console.log('[MAIL-SYNC] ' + account.email + ': Found ' + newMessages.length + ' new emails to cache');
-      // Process each new message: write to emailLogs, emit SSE, send notifications
+      // 先更新缓存，再发通知（确保 SSE 推送时数据已就绪）
+      await parseAndCacheEmails(newMessages, account);
       const processedUIDs = new Set([...existingUIDs]);
       for (const msg of newMessages) {
         await processNewMessage(msg, account, processedUIDs);
       }
-      // Also update accountEmails cache
-      await parseAndCacheEmails(newMessages, account);
     }
 
     // Update account status
