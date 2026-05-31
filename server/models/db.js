@@ -188,6 +188,39 @@ async function initDB() {
   const { data, dirty } = await loadAll();
   console.log('[DB] Loaded: ' + TABLES.map(t => t + '=' + data[t].length).join(', '));
 
+  // 启动时自动去重
+  let dedupCount = 0;
+
+  // 邮箱账户去重（同一邮箱只保留最新的）
+  const seenEmails = new Map();
+  for (let i = data.accounts.length - 1; i >= 0; i--) {
+    const acc = data.accounts[i];
+    if (seenEmails.has(acc.email)) {
+      data.accounts.splice(i, 1);
+      dedupCount++;
+    } else {
+      seenEmails.set(acc.email, i);
+    }
+  }
+
+  // 通知渠道去重（同一类型只保留最新的）
+  const seenTypes = new Map();
+  for (let i = data.notifications.length - 1; i >= 0; i--) {
+    const notif = data.notifications[i];
+    if (seenTypes.has(notif.type)) {
+      data.notifications.splice(i, 1);
+      dedupCount++;
+    } else {
+      seenTypes.set(notif.type, i);
+    }
+  }
+
+  if (dedupCount > 0) {
+    console.log(`[DB] 自动去重: 移除 ${dedupCount} 条重复数据`);
+    dirty.add('accounts');
+    dirty.add('notifications');
+  }
+
   // Build the db object that getDB() returns — same shape as lowdb
   db = { data, write: () => flushToMySQL(data, dirty) };
   return db;

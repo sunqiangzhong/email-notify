@@ -1,54 +1,113 @@
 /**
  * 系统更新服务
- * 构建时注入版本信息，运行时直接读取
+ * 从 GitHub releases 获取最新版本并对比
  */
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
+// GitHub 仓库信息
+const GITHUB_OWNER = 'sunqiangzhong';
+const GITHUB_REPO = 'email-notify';
+const GITHUB_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+
 // 版本信息文件路径（构建时生成）
 const VERSION_FILE = path.join(__dirname, '..', 'version.json');
 
-// 读取版本信息
-let versionInfo = {
-  currentVersion: '1.0.0',
-  latestVersion: '1.0.0',
-  hasUpdate: false,
-  releaseUrl: '',
-  releaseNotes: '',
-  publishedAt: null,
-};
-
+// 读取当前版本
+let currentVersion = '1.0.0';
 try {
   if (fs.existsSync(VERSION_FILE)) {
     const data = JSON.parse(fs.readFileSync(VERSION_FILE, 'utf-8'));
-    versionInfo = { ...versionInfo, ...data };
-    // 计算是否有更新
-    versionInfo.hasUpdate = compareVersions(versionInfo.latestVersion, versionInfo.currentVersion) > 0;
+    currentVersion = data.currentVersion || '1.0.0';
   }
 } catch (e) {
   console.log('[UPDATE] 未找到版本信息文件，使用默认版本');
 }
 
+// 缓存最新版本信息
+let cachedLatest = null;
+let cacheExpiresAt = 0;
+
 /**
  * 获取当前版本
  */
 function getCurrentVersion() {
-  return versionInfo.currentVersion;
+  return currentVersion;
 }
 
 /**
- * 检查是否有新版本（直接读取构建时注入的信息）
+ * 从 GitHub 获取最新版本
+ */
+async function fetchLatestFromGithub() {
+  try {
+    const res = await axios.get(GITHUB_API, {
+      timeout: 10000,
+      headers: { 'User-Agent': 'email-notify' },
+    });
+
+    const release = res.data;
+    const tag = release.tag_name || '';
+    const latestVersion = tag.replace(/^v/, '');
+
+    return {
+      latestVersion,
+      releaseUrl: release.html_url || '',
+      releaseNotes: release.body || '',
+      publishedAt: release.published_at || null,
+    };
+  } catch (err) {
+    console.error('[UPDATE] 获取 GitHub 最新版本失败:', err.message);
+    return null;
+  }
+}
+
+/**
+ * 检查是否有新版本
  */
 async function checkForUpdates(force = false) {
+  // 缓存 30 分钟
+  if (!force && cachedLatest && Date.now() < cacheExpiresAt) {
+    return {
+      currentVersion,
+      ...cachedLatest,
+      hasUpdate: compareVersions(cachedLatest.latestVersion, currentVersion) > 0,
+      cached: true,
+    };
+  }
+
+  const latest = await fetchLatestFromGithub();
+
+  if (latest) {
+    cachedLatest = latest;
+    cacheExpiresAt = Date.now() + 30 * 60 * 1000; // 30 分钟缓存
+
+    return {
+      currentVersion,
+      ...latest,
+      hasUpdate: compareVersions(latest.latestVersion, currentVersion) > 0,
+      cached: false,
+    };
+  }
+
+  // GitHub 请求失败，返回缓存或默认值
+  if (cachedLatest) {
+    return {
+      currentVersion,
+      ...cachedLatest,
+      hasUpdate: compareVersions(cachedLatest.latestVersion, currentVersion) > 0,
+      cached: true,
+    };
+  }
+
   return {
-    currentVersion: versionInfo.currentVersion,
-    latestVersion: versionInfo.latestVersion,
-    hasUpdate: versionInfo.hasUpdate,
-    releaseUrl: versionInfo.releaseUrl,
-    releaseNotes: versionInfo.releaseNotes,
-    publishedAt: versionInfo.publishedAt,
-    cached: true,
+    currentVersion,
+    latestVersion: currentVersion,
+    hasUpdate: false,
+    releaseUrl: '',
+    releaseNotes: '',
+    publishedAt: null,
+    cached: false,
   };
 }
 

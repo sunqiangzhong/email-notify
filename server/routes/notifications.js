@@ -13,12 +13,16 @@ const {
   updateFilter,
   deleteFilter,
   getNotificationTypes,
+  debugNotifications,
 } = require('../controllers/notificationsController');
 
 router.use(authMiddleware);
 
 // 获取通知类型配置
 router.get('/types', getNotificationTypes);
+
+// 诊断接口
+router.get('/debug', debugNotifications);
 
 // 通知渠道 CRUD
 router.get('/', getNotifications);

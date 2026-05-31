@@ -71,6 +71,20 @@ async function bootstrap() {
     await mailService.startAll();
     console.log('[MAIL] Email polling engine started');
 
+    // 注册企业微信自定义菜单
+    try {
+      const { getDB } = require('./models/db');
+      const wechatCmd = require('./services/wechatCommandService');
+      const db = getDB();
+      const wechatConfig = db.data.notifications.find(n => n.type === 'wecom_app' && n.active);
+      if (wechatConfig && wechatConfig.config.corpId && wechatConfig.config.appSecret) {
+        await wechatCmd.createMenus(wechatConfig.config);
+        console.log('[WECHAT] 自定义菜单注册完成');
+      }
+    } catch (err) {
+      console.error('[WECHAT] 菜单注册失败（不影响启动）:', err.message);
+    }
+
     app.listen(config.port, '0.0.0.0', () => {
       console.log('[SERVER] Mul-Email Server running on port ' + config.port);
       console.log('[SERVER] Data directory: ' + config.dataDir);

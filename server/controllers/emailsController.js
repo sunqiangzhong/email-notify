@@ -39,8 +39,11 @@ async function createAccount(req, res, next) {
     const { name, email, password, type, imapHost, imapPort, useSSL, useProxy, proxyId, active } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, code: 'MISSING_FIELDS', message: '邮箱地址和授权码/密码不能为空' });
     const db = getDB();
-    const existing = db.data.accounts.find(a => a.userId === req.userId && a.email === email);
-    if (existing) return res.status(409).json({ success: false, code: 'DUPLICATE', message: '该邮箱账户已存在' });
+    // 全局去重：同一邮箱不允许重复添加（跨用户也检查）
+    const existing = db.data.accounts.find(a => a.email === email);
+    if (existing) {
+      return res.status(409).json({ success: false, code: 'DUPLICATE', message: `邮箱 ${email} 已存在（账户: ${existing.name || existing.email}），请勿重复添加` });
+    }
     const preset = IMAP_PRESETS[type] || IMAP_PRESETS.custom;
     const account = {
       id: uuidv4(), userId: req.userId, name: name || email.split('@')[0], email, password,

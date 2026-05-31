@@ -90,14 +90,14 @@ async function sendWecomApp(config, emailData, axiosConfig = {}) {
   }
 
   const accessToken = tokenRes.data.access_token;
-  const content = buildMessageContent(emailData, 'markdown');
+  const content = buildMessageContent(emailData, 'text');
 
-  // 发送消息
+  // 发送消息（使用 text 格式，普通微信也能查看）
   const sendRes = await axios.post(`${baseUrl}/cgi-bin/message/send?access_token=${accessToken}`, {
     touser: '@all',
-    msgtype: 'markdown',
+    msgtype: 'text',
     agentid: parseInt(agentId),
-    markdown: { content },
+    text: { content },
   }, {
     timeout: 10000,
     ...axiosConfig,

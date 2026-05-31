@@ -135,6 +135,16 @@ async function createNotification(req, res, next) {
       return res.status(400).json({ success: false, code: 'INVALID_TYPE', message: '无效的通知渠道类型' });
     }
 
+    // 去重：同一类型的通知渠道不允许重复创建
+    const existing = db.data.notifications.find(n => n.type === type);
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        code: 'DUPLICATE',
+        message: `${NOTIFICATION_TYPES[type]?.name || type} 渠道已存在（名称: ${existing.name}），请勿重复添加。如需修改请点击编辑`,
+      });
+    }
+
     // 验证必填字段
     const typeConfig = NOTIFICATION_TYPES[type];
     for (const field of typeConfig.fields) {
@@ -147,12 +157,46 @@ async function createNotification(req, res, next) {
       }
     }
 
+    // 企业微信应用：验证 EncodingAESKey 长度
+    if (type === 'wecom_app' && config?.encodingAesKey) {
+      const keyLen = Buffer.from(config.encodingAesKey + '=', 'base64').length;
+      if (keyLen !== 32) {
+        console.error(`[NOTIFY] EncodingAESKey 长度异常: 原始=${config.encodingAesKey.length}字符, 解码后=${keyLen}字节, 值="${config.encodingAesKey}"`);
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_CONFIG',
+          message: `EncodingAESKey 长度无效（应为43个字符，当前${config.encodingAesKey.length}个字符），请从企业微信后台重新复制`,
+        });
+      }
+    }
+
+    // 打印保存的配置（隐藏敏感值）
+    console.log(`[NOTIFY] 创建通知渠道: type=${type}, name=${name}`);
+    // 过滤掩码值（防止前端误传）
+    let safeConfig = config || {};
+    for (const [key, value] of Object.entries(safeConfig)) {
+      if (isMaskedValue(value)) {
+        console.warn(`[NOTIFY] 创建时发现掩码值，已移除: ${key}="${value}"`);
+        safeConfig = { ...safeConfig };
+        delete safeConfig[key];
+      }
+    }
+    if (safeConfig) {
+      for (const [key, value] of Object.entries(safeConfig)) {
+        if (SENSITIVE_FIELDS.includes(key)) {
+          console.log(`[NOTIFY]   ${key}: *** (${typeof value === 'string' ? value.length : '?'}字符)`);
+        } else {
+          console.log(`[NOTIFY]   ${key}: ${value}`);
+        }
+      }
+    }
+
     const notification = {
       id: uuidv4(),
       userId: req.userId,
       name,
       type,
-      config: config || {},
+      config: safeConfig,
       active: active !== false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -173,14 +217,27 @@ async function createNotification(req, res, next) {
 const SENSITIVE_FIELDS = ['appSecret', 'secret', 'botToken', 'sendKey'];
 
 /**
- * 清理配置更新：过滤掉脱敏值和空值，避免覆盖真实数据
+ * 检测是否是掩码值（如 '••••••', '***', '[已隐藏...]' 等）
+ */
+function isMaskedValue(val) {
+  if (typeof val !== 'string') return false;
+  // 全是特殊字符（•、*、.、# 等）
+  if (/^[•*.\-#]+$/.test(val)) return true;
+  // 包含"已隐藏"或"masked"
+  if (val.includes('已隐藏') || val.includes('masked')) return true;
+  return false;
+}
+
+/**
+ * 清理配置更新：过滤掉掩码值和空值，避免覆盖真实数据
  */
 function cleanConfigForUpdate(newConfig) {
   if (!newConfig || typeof newConfig !== 'object') return newConfig;
   const cleaned = { ...newConfig };
   for (const key of Object.keys(cleaned)) {
-    // 过滤脱敏值（如 '••••••'）
-    if (SENSITIVE_FIELDS.includes(key) && typeof cleaned[key] === 'string' && cleaned[key].includes('•')) {
+    // 过滤掩码值
+    if (isMaskedValue(cleaned[key])) {
+      console.log(`[NOTIFY] 过滤掩码字段: ${key}="${cleaned[key]}"`);
       delete cleaned[key];
       continue;
     }
@@ -212,6 +269,30 @@ async function updateNotification(req, res, next) {
     if (config !== undefined) {
       // 清理配置：过滤脱敏值和空值，防止覆盖真实数据
       const cleanedConfig = cleanConfigForUpdate(config);
+
+      // 企业微信应用：验证 EncodingAESKey 长度
+      if (notification.type === 'wecom_app' && cleanedConfig.encodingAesKey) {
+        const keyLen = Buffer.from(cleanedConfig.encodingAesKey + '=', 'base64').length;
+        if (keyLen !== 32) {
+          console.error(`[NOTIFY] EncodingAESKey 长度异常: 原始=${cleanedConfig.encodingAesKey.length}字符, 解码后=${keyLen}字节, 值="${cleanedConfig.encodingAesKey}"`);
+          return res.status(400).json({
+            success: false,
+            code: 'INVALID_CONFIG',
+            message: `EncodingAESKey 长度无效（应为43个字符，当前${cleanedConfig.encodingAesKey.length}个字符），请从企业微信后台重新复制`,
+          });
+        }
+      }
+
+      // 打印更新的配置（隐藏敏感值）
+      console.log(`[NOTIFY] 更新通知渠道: id=${notification.id}, type=${notification.type}`);
+      for (const [key, value] of Object.entries(cleanedConfig)) {
+        if (SENSITIVE_FIELDS.includes(key)) {
+          console.log(`[NOTIFY]   ${key}: *** (${typeof value === 'string' ? value.length : '?'}字符)`);
+        } else {
+          console.log(`[NOTIFY]   ${key}: ${value}`);
+        }
+      }
+
       notification.config = { ...notification.config, ...cleanedConfig };
     }
     if (active !== undefined) notification.active = active;
@@ -381,6 +462,39 @@ async function getNotificationTypes(req, res, next) {
   }
 }
 
+/**
+ * GET /api/notifications/debug
+ * 诊断：查看数据库中通知配置的实际存储值
+ */
+async function debugNotifications(req, res, next) {
+  try {
+    const db = getDB();
+    const notifications = db.data.notifications
+      .filter(n => n.userId === req.userId)
+      .map(n => ({
+        id: n.id,
+        name: n.name,
+        type: n.type,
+        active: n.active,
+        config: Object.fromEntries(
+          Object.entries(n.config || {}).map(([k, v]) => {
+            if (SENSITIVE_FIELDS.includes(k) && v) {
+              return [k, `[已隐藏, ${String(v).length}字符]`];
+            }
+            // 对非敏感字段也显示长度，便于诊断
+            if (typeof v === 'string' && v.length > 0) {
+              return [k, `${v} (${v.length}字符)`];
+            }
+            return [k, v];
+          })
+        ),
+      }));
+    res.json({ success: true, data: notifications });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getNotifications,
   getNotificationById,
@@ -393,5 +507,6 @@ module.exports = {
   updateFilter,
   deleteFilter,
   getNotificationTypes,
+  debugNotifications,
   NOTIFICATION_TYPES,
 };

@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { getConfiguredApiToken } = require('../middlewares/apiToken');
 const { getDB } = require('../models/db');
 const { processNotification } = require('../services/notificationService');
+const wechatCmd = require('../services/wechatCommandService');
 
 /**
  * 企业微信加解密类（对齐 MoviePilot WXBizMsgCrypt3）
@@ -291,38 +292,27 @@ router.post('/', express.text({ type: ['text/xml', 'application/xml'] }), async 
       const msgType = (sMsgStr.match(/<MsgType><!\[CDATA\[(.*?)\]\]><\/MsgType>/) || [])[1] || '';
       const content = (sMsgStr.match(/<Content><!\[CDATA\[(.*?)\]\]><\/Content>/) || [])[1] || '';
       const fromUser = (sMsgStr.match(/<FromUserName><!\[CDATA\[(.*?)\]\]><\/FromUserName>/) || [])[1] || '';
+      const event = (sMsgStr.match(/<Event><!\[CDATA\[(.*?)\]\]><\/Event>/) || [])[1] || '';
+      const eventKey = (sMsgStr.match(/<EventKey><!\[CDATA\[(.*?)\]\]><\/EventKey>/) || [])[1] || '';
 
-      console.log(`[WECHAT] 消息: type=${msgType}, from=${fromUser}, content=${content}`);
+      console.log(`[WECHAT] 消息: type=${msgType}, event=${event}, from=${fromUser}, content=${content}, eventKey=${eventKey}`);
 
-      if (msgType === 'text' && content) {
-        const db = getDB();
-        const user = db.data.users[0];
-        if (user) {
-          const emailData = {
-            subject: content.substring(0, 50),
-            senderName: fromUser || '企业微信',
-            senderEmail: 'wechat@local',
-            toEmail: '',
-            snippet: content,
-            receivedAt: new Date().toISOString(),
-          };
+      // 使用命令服务处理消息（对齐 MoviePilot message_parser）
+      const replyContent = await wechatCmd.processMessage(
+        msgType,
+        event,
+        msgType === 'event' ? eventKey : content,
+        fromUser,
+        client_config
+      );
 
-          const { v4: uuidv4 } = require('uuid');
-          const logId = uuidv4();
-          db.data.emailLogs.push({
-            id: logId,
-            userId: user.id,
-            accountId: 'external',
-            subject: emailData.subject,
-            senderName: emailData.senderName,
-            senderEmail: emailData.senderEmail,
-            toEmail: emailData.toEmail,
-            receivedAt: emailData.receivedAt,
-            forwardStatus: 'sending',
-            snippet: emailData.snippet,
-          });
-          await db.write();
-          await processNotification(user.id, emailData, logId);
+      // 发送回复消息
+      if (replyContent) {
+        try {
+          await wechatCmd.sendTextMessage(client_config.config, replyContent, fromUser);
+          console.log(`[WECHAT] 回复已发送给 ${fromUser}`);
+        } catch (err) {
+          console.error(`[WECHAT] 发送回复失败: ${err.message}`);
         }
       }
 
