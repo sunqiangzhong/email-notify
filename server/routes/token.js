@@ -63,13 +63,15 @@ router.get('/status', apiTokenMiddleware, async (req, res, next) => {
 
 /**
  * POST /api/token/notify
- * 通过令牌发送通知
- * Body: { subject, senderName, senderEmail, toEmail, snippet }
+ * 通过令牌发送通知（支持 GET 和 POST）
+ * 参数：subject, senderName, senderEmail, toEmail, snippet
  */
-router.post('/notify', apiTokenMiddleware, async (req, res, next) => {
+const handleNotify = async (req, res, next) => {
   try {
     const db = getDB();
-    const { subject, senderName, senderEmail, toEmail, snippet } = req.body;
+    // 支持 GET (query) 和 POST (body) 参数
+    const params = req.method === 'GET' ? req.query : req.body;
+    const { subject, senderName, senderEmail, toEmail, snippet } = params;
 
     if (!subject) {
       return res.status(400).json({
@@ -121,15 +123,20 @@ router.post('/notify', apiTokenMiddleware, async (req, res, next) => {
     // 发送通知
     await processNotification(user.id, emailData, logId);
 
+    // 返回 MoviePilot 格式的响应
     res.json({
-      success: true,
+      status: 'OK',
       message: '通知已发送',
-      data: { logId }
+      logId
     });
   } catch (err) {
     next(err);
   }
-});
+};
+
+// 同时支持 GET 和 POST
+router.get('/notify', apiTokenMiddleware, handleNotify);
+router.post('/notify', apiTokenMiddleware, handleNotify);
 
 /**
  * GET /api/token/emails
