@@ -1,8 +1,26 @@
 /**
  * API 令牌验证中间件
- * 参考 MoviePilot 实现，支持 URL 参数和 Header 两种方式
+ * 优先从数据库读取，回退到环境变量
  */
 const config = require('../config');
+
+/**
+ * 获取当前配置的 API Token
+ * 优先级：数据库 settings 表 > 环境变量 API_TOKEN
+ */
+function getConfiguredApiToken() {
+  try {
+    const { getDB } = require('../models/db');
+    const db = getDB();
+    const setting = db.data.settings.find(s => s.key === 'API_TOKEN');
+    if (setting && setting.value) {
+      return setting.value;
+    }
+  } catch (_) {
+    // 数据库未初始化时回退到环境变量
+  }
+  return config.apiToken || '';
+}
 
 /**
  * 从请求中获取 API Token
@@ -16,17 +34,16 @@ function getApiTokenFromRequest(req) {
 
 /**
  * API Token 验证中间件
- * 验证请求中的 token 是否与配置的 API_TOKEN 匹配
  */
 function apiTokenMiddleware(req, res, next) {
-  const apiToken = config.apiToken;
+  const apiToken = getConfiguredApiToken();
 
   // 如果未配置 API_TOKEN，拒绝所有请求
   if (!apiToken) {
     return res.status(503).json({
       success: false,
       code: 'API_TOKEN_NOT_CONFIGURED',
-      message: 'API 令牌未配置，请在环境变量中设置 API_TOKEN'
+      message: 'API 令牌未配置，请在系统设置中配置 API_TOKEN'
     });
   }
 
@@ -50,13 +67,6 @@ function apiTokenMiddleware(req, res, next) {
 
   // Token 验证通过
   next();
-}
-
-/**
- * 获取当前配置的 API Token（用于前端显示）
- */
-function getConfiguredApiToken() {
-  return config.apiToken || '';
 }
 
 module.exports = {

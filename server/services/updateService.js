@@ -9,7 +9,9 @@ const path = require('path');
 // GitHub 仓库信息
 const GITHUB_OWNER = 'sunqiangzhong';
 const GITHUB_REPO = 'email-notify';
-const GITHUB_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+const GITHUB_RELEASES_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+const GITHUB_TAGS_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/tags`;
+const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 
 // 版本信息文件路径（构建时生成）
 const VERSION_FILE = path.join(__dirname, '..', 'version.json');
@@ -38,28 +40,46 @@ function getCurrentVersion() {
 
 /**
  * 从 GitHub 获取最新版本
+ * 优先读 Release，没有则读最新 Tag
  */
 async function fetchLatestFromGithub() {
-  try {
-    const res = await axios.get(GITHUB_API, {
-      timeout: 10000,
-      headers: { 'User-Agent': 'email-notify' },
-    });
+  const headers = { 'User-Agent': 'email-notify' };
 
+  // 方式一：尝试 GitHub Releases
+  try {
+    const res = await axios.get(GITHUB_RELEASES_API, { timeout: 10000, headers });
     const release = res.data;
     const tag = release.tag_name || '';
-    const latestVersion = tag.replace(/^v/, '');
-
     return {
-      latestVersion,
-      releaseUrl: release.html_url || '',
+      latestVersion: tag.replace(/^v/, ''),
+      releaseUrl: release.html_url || GITHUB_RELEASES_URL,
       releaseNotes: release.body || '',
       publishedAt: release.published_at || null,
     };
   } catch (err) {
-    console.error('[UPDATE] 获取 GitHub 最新版本失败:', err.message);
-    return null;
+    // 404 说明没有 Release，尝试 tags
+    if (err.response?.status !== 404) {
+      console.error('[UPDATE] 获取 GitHub Release 失败:', err.message);
+    }
   }
+
+  // 方式二：尝试 GitHub Tags
+  try {
+    const res = await axios.get(GITHUB_TAGS_API, { timeout: 10000, headers });
+    if (res.data && res.data.length > 0) {
+      const latestTag = res.data[0].name || '';
+      return {
+        latestVersion: latestTag.replace(/^v/, ''),
+        releaseUrl: `${GITHUB_RELEASES_URL}/tag/${latestTag}`,
+        releaseNotes: '',
+        publishedAt: null,
+      };
+    }
+  } catch (err) {
+    console.error('[UPDATE] 获取 GitHub Tags 失败:', err.message);
+  }
+
+  return null;
 }
 
 /**

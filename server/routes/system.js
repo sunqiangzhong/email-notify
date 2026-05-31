@@ -116,6 +116,26 @@ router.post('/env', (req, res, next) => {
       // 更新 config 对象（如果是 API_TOKEN）
       if (key === 'API_TOKEN') {
         config.apiToken = stringValue;
+        // 同步保存到数据库（持久化，不随容器重建丢失）
+        try {
+          const { getDB } = require('../models/db');
+          const db = getDB();
+          const existing = db.data.settings.find(s => s.key === 'API_TOKEN');
+          if (existing) {
+            existing.value = stringValue;
+            existing.updatedAt = new Date().toISOString();
+          } else {
+            db.data.settings.push({
+              key: 'API_TOKEN',
+              value: stringValue,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+          db.write();
+          console.log('[SYSTEM] API_TOKEN 已同步到数据库');
+        } catch (err) {
+          console.error('[SYSTEM] API_TOKEN 保存到数据库失败:', err.message);
+        }
       }
     }
 
