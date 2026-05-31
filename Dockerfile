@@ -46,6 +46,7 @@ RUN apt-get update && \
     procps \
     mysql-server \
     mysql-client \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装 Node.js 20
@@ -77,6 +78,11 @@ COPY --from=backend-deps /app/server/node_modules /app/server/node_modules
 
 # 复制后端源代码
 COPY server/ /app/server/
+
+# 构建时获取 GitHub Release 版本信息
+# 使用脚本来处理，避免 Dockerfile 解析问题
+COPY get-version.sh /tmp/get-version.sh
+RUN chmod +x /tmp/get-version.sh && /tmp/get-version.sh && rm /tmp/get-version.sh
 
 # 创建数据目录
 RUN mkdir -p /app/server/data

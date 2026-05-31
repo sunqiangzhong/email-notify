@@ -168,6 +168,31 @@ async function createNotification(req, res, next) {
 }
 
 /**
+ * 敏感字段列表
+ */
+const SENSITIVE_FIELDS = ['appSecret', 'secret', 'botToken', 'sendKey'];
+
+/**
+ * 清理配置更新：过滤掉脱敏值和空值，避免覆盖真实数据
+ */
+function cleanConfigForUpdate(newConfig) {
+  if (!newConfig || typeof newConfig !== 'object') return newConfig;
+  const cleaned = { ...newConfig };
+  for (const key of Object.keys(cleaned)) {
+    // 过滤脱敏值（如 '••••••'）
+    if (SENSITIVE_FIELDS.includes(key) && typeof cleaned[key] === 'string' && cleaned[key].includes('•')) {
+      delete cleaned[key];
+      continue;
+    }
+    // 过滤空字符串（防止可选字段被清空）
+    if (cleaned[key] === '') {
+      delete cleaned[key];
+    }
+  }
+  return cleaned;
+}
+
+/**
  * PUT /api/notifications/:id
  * 更新通知渠道配置
  */
@@ -184,7 +209,11 @@ async function updateNotification(req, res, next) {
 
     if (name !== undefined) notification.name = name;
     if (type !== undefined) notification.type = type;
-    if (config !== undefined) notification.config = { ...notification.config, ...config };
+    if (config !== undefined) {
+      // 清理配置：过滤脱敏值和空值，防止覆盖真实数据
+      const cleanedConfig = cleanConfigForUpdate(config);
+      notification.config = { ...notification.config, ...cleanedConfig };
+    }
     if (active !== undefined) notification.active = active;
     notification.updatedAt = new Date().toISOString();
 
