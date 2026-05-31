@@ -482,6 +482,32 @@ export const systemApi = {
     const response = await fetch(`${API_BASE}/health`);
     return response.json();
   },
+
+  // 获取环境变量配置
+  getEnv: async () => {
+    return request<{ success: boolean; data: Record<string, string> }>('/system/env');
+  },
+
+  // 更新环境变量配置
+  setEnv: async (env: Record<string, string>) => {
+    return request<{ success: boolean; message: string }>('/system/env', {
+      method: 'POST',
+      body: JSON.stringify(env),
+    });
+  },
+
+  // 获取单个配置项
+  getSetting: async (key: string) => {
+    return request<{ success: boolean; data: { key: string; value: string } }>(`/system/setting/${key}`);
+  },
+
+  // 更新单个配置项
+  setSetting: async (key: string, value: string) => {
+    return request<{ success: boolean; message: string; data: { key: string; value: string } }>(`/system/setting/${key}`, {
+      method: 'POST',
+      body: JSON.stringify({ value }),
+    });
+  },
 };
 
 // ============ 连通性测试接口 ============

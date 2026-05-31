@@ -13,7 +13,7 @@ import {
   ShieldAlert,
   LogOut,
   Loader2,
-  Key
+  Settings
 } from 'lucide-react'
 import { MailAccount, EmailLog, ProxyConfig, WeChatConfig, UserProfile } from './types'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
@@ -26,7 +26,7 @@ import WeChatNotificationsView from './components/WeChatNotificationsView'
 import MultiUserManagementView from './components/MultiUserManagementView';
 import LogViewer from './components/LogViewer';
 import ProfileSettingsView from './components/ProfileSettingsView';
-import ApiTokenView from './components/ApiTokenView';
+import SettingsView from './components/SettingsView';
 import UpdateButton from './components/UpdateButton';
 import { ToastContainer, ToastItem } from './components/Toast';
 import { emailApi, proxyApi, notificationApi, MailAccountData, ProxyData, NotificationData } from './services/api'
@@ -63,7 +63,7 @@ function AppContent() {
   })
 
   // UI 状态
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'proxy' | 'wechat' | 'users' | 'profile' | 'api'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'proxy' | 'wechat' | 'users' | 'profile' | 'settings'>('dashboard')
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
   const [currentTime, setCurrentTime] = useState<string>('')
@@ -334,7 +334,7 @@ function AppContent() {
               { id: 'accounts', label: '邮箱账户', icon: Mail },
               { id: 'proxy', label: '代理设置', icon: Globe },
               { id: 'wechat', label: '通知', icon: MessageSquareCode },
-              { id: 'api', label: 'API 令牌', icon: Key }
+              { id: 'settings', label: '设置', icon: Settings }
             ].map(item => {
               const Icon = item.icon
               const isActive = activeTab === item.id
@@ -479,9 +479,9 @@ function AppContent() {
             </div>
           )}
 
-          {activeTab === 'api' && (
+          {activeTab === 'settings' && (
             <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-5">
-              <ApiTokenView
+              <SettingsView
                 triggerToast={triggerToast}
               />
             </div>

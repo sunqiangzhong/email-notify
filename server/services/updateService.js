@@ -12,13 +12,15 @@ const GITHUB_OWNER = 'sunqiangzhong';
 const GITHUB_REPO = 'email-notify';
 const GITHUB_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`;
 
-// 当前版本（从 package.json 读取）
-let currentVersion = '1.0.0';
-try {
-  const pkg = require('../package.json');
-  currentVersion = pkg.version || '1.0.0';
-} catch (e) {
-  // 忽略错误，使用默认版本
+// 当前版本（优先从环境变量读取，否则从 package.json 读取）
+let currentVersion = process.env.APP_VERSION || '1.0.0';
+if (currentVersion === '1.0.0') {
+  try {
+    const pkg = require('../package.json');
+    currentVersion = pkg.version || '1.0.0';
+  } catch (e) {
+    // 忽略错误，使用默认版本
+  }
 }
 
 // 缓存最新版本信息
