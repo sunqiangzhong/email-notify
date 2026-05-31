@@ -12,7 +12,8 @@ import {
   Users,
   ShieldAlert,
   LogOut,
-  Loader2
+  Loader2,
+  Key
 } from 'lucide-react'
 import { MailAccount, EmailLog, ProxyConfig, WeChatConfig, UserProfile } from './types'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
@@ -25,6 +26,8 @@ import WeChatNotificationsView from './components/WeChatNotificationsView'
 import MultiUserManagementView from './components/MultiUserManagementView';
 import LogViewer from './components/LogViewer';
 import ProfileSettingsView from './components/ProfileSettingsView';
+import ApiTokenView from './components/ApiTokenView';
+import UpdateButton from './components/UpdateButton';
 import { ToastContainer, ToastItem } from './components/Toast';
 import { emailApi, proxyApi, notificationApi, MailAccountData, ProxyData, NotificationData } from './services/api'
 
@@ -60,7 +63,7 @@ function AppContent() {
   })
 
   // UI 状态
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'proxy' | 'wechat' | 'users' | 'profile'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'accounts' | 'proxy' | 'wechat' | 'users' | 'profile' | 'api'>('dashboard')
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
   const [currentTime, setCurrentTime] = useState<string>('')
@@ -330,7 +333,8 @@ function AppContent() {
               { id: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
               { id: 'accounts', label: '邮箱账户', icon: Mail },
               { id: 'proxy', label: '代理设置', icon: Globe },
-              { id: 'wechat', label: '通知', icon: MessageSquareCode }
+              { id: 'wechat', label: '通知', icon: MessageSquareCode },
+              { id: 'api', label: 'API 令牌', icon: Key }
             ].map(item => {
               const Icon = item.icon
               const isActive = activeTab === item.id
@@ -439,6 +443,7 @@ function AppContent() {
           </div>
 
           <div className="flex items-center gap-3">
+            <UpdateButton triggerToast={triggerToast} />
             <LogViewer />
             <span className="text-[11px] text-slate-400 font-mono hidden sm:inline">
               {isConnected ? '后端已连接 (SSE)' : '正在连接...'}
@@ -469,6 +474,14 @@ function AppContent() {
           {activeTab === 'wechat' && (
             <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-5">
               <WeChatNotificationsView
+                triggerToast={triggerToast}
+              />
+            </div>
+          )}
+
+          {activeTab === 'api' && (
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-5">
+              <ApiTokenView
                 triggerToast={triggerToast}
               />
             </div>

@@ -5,7 +5,7 @@
 
 set -e
 
-IMAGE_NAME="sunqz/mul-email"
+IMAGE_NAME="sunqz/email-notify"
 TAG="allinone-latest"
 FULL_IMAGE="${IMAGE_NAME}:${TAG}"
 

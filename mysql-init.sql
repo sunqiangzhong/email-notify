@@ -110,3 +110,13 @@ CREATE TABLE IF NOT EXISTS accountEmails (
     attachmentsCount INT DEFAULT 0,
     fetchedAt DATETIME
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    id VARCHAR(36) PRIMARY KEY,
+    userId VARCHAR(36),
+    `key` VARCHAR(255) NOT NULL,
+    value TEXT,
+    createdAt DATETIME,
+    updatedAt DATETIME,
+    UNIQUE KEY uk_user_key (userId, `key`)
+);

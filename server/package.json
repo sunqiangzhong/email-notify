@@ -1,5 +1,5 @@
 {
-  "name": "mul-email-server",
+  "name": "email-notify-server",
   "version": "1.0.0",
   "description": "多邮箱聚合与微信通知管理系统 - 后端服务",
   "main": "server.js",

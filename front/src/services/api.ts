@@ -564,3 +564,54 @@ export const connectivityApi = {
     });
   },
 };
+
+// ============ API 令牌接口 ============
+
+export const tokenApi = {
+  // 获取当前令牌信息
+  get: async () => {
+    return request<{ success: boolean; data: { token: string | null; hasToken: boolean; message: string } }>('/token');
+  },
+};
+
+// ============ 系统更新接口 ============
+
+export interface UpdateCheckResult {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  releaseUrl: string;
+  releaseNotes: string;
+  publishedAt: string;
+  cached: boolean;
+}
+
+export interface CurrentVersionInfo {
+  version: string;
+  isDocker: boolean;
+  hasDockerAccess: boolean;
+  canAutoUpdate: boolean;
+}
+
+export const updateApi = {
+  // 获取当前版本信息
+  getCurrent: async () => {
+    return request<{ success: boolean; data: CurrentVersionInfo }>('/update/current');
+  },
+
+  // 检查是否有新版本
+  check: async (force = false) => {
+    return request<{ success: boolean; data: UpdateCheckResult }>(`/update/check?force=${force}`);
+  },
+
+  // 执行自动更新
+  perform: async () => {
+    return request<{
+      success: boolean;
+      message: string;
+      data: { log: Array<{ time: string; message: string }> };
+    }>('/update/perform', {
+      method: 'POST',
+    });
+  },
+};

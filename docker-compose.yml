@@ -1,10 +1,10 @@
 services:
-  mul-email:
+  email-notify:
     build:
       context: .
       dockerfile: Dockerfile
-    image: sunqz/mul-email:latest
-    container_name: mul-email-allinone
+    image: sunqz/email-notify:latest
+    container_name: email-notify-allinone
     restart: unless-stopped
     ports:
       - "5111:80"
@@ -15,6 +15,8 @@ services:
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=admin123
       - TZ=Asia/Shanghai
+      # API 令牌（用于外部访问，可选）
+      - API_TOKEN=
       # MySQL 配置（内置）
       - MYSQL_ROOT_PASSWORD=mul_email_pass
       - MYSQL_PASSWORD=mul_email_pass
@@ -27,8 +29,8 @@ services:
       - IDLE_REISSUE_INTERVAL=1740000
       - RECONNECT_BASE_DELAY=30000
     volumes:
-      - /vol1/1000/docker/mul-email/mysql:/var/lib/mysql        # MySQL 数据持久化
-      - /vol1/1000/docker/mul-email/data:/app/server/data       # 应用数据持久化
+      - /vol1/1000/docker/email-notify/mysql:/var/lib/mysql        # MySQL 数据持久化
+      - /vol1/1000/docker/email-notify/data:/app/server/data       # 应用数据持久化
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/health"]
       interval: 30s

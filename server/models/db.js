@@ -10,7 +10,7 @@ const fs = require('fs');
 const mysql = require('mysql2/promise');
 const config = require('../config');
 
-const TABLES = ['users', 'accounts', 'proxies', 'notifications', 'filters', 'emailLogs', 'accountEmails'];
+const TABLES = ['users', 'accounts', 'proxies', 'notifications', 'filters', 'emailLogs', 'accountEmails', 'settings'];
 
 const JSON_COLUMNS = {
   notifications: ['config'],

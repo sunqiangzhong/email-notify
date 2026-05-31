@@ -17,6 +17,8 @@ const logsRoutes = require('./routes/logs');
 const systemRoutes = require('./routes/system');
 const adminRoutes = require('./routes/admin');
 const connectivityRoutes = require('./routes/connectivity');
+const tokenRoutes = require('./routes/token');
+const updateRoutes = require('./routes/update');
 
 const app = express();
 
@@ -45,6 +47,8 @@ app.use('/api/logs', logsRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/system/connectivity', connectivityRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/token', tokenRoutes);
+app.use('/api/update', updateRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime() });
