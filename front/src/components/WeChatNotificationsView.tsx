@@ -442,7 +442,7 @@ export default function WeChatNotificationsView({ triggerToast }: Props) {
                     {field.required && <span className="text-rose-400 ml-0.5">*</span>}
                   </label>
                   <input
-                    type={field.key.toLowerCase().includes('secret') || field.key.toLowerCase().includes('token') || field.key.toLowerCase().includes('key') || field.key.toLowerCase().includes('password') ? 'password' : 'text'}
+                    type="text"
                     required={field.required}
                     value={editingNotification.config?.[field.key as keyof typeof editingNotification.config] || ''}
                     onChange={e => setEditingNotification({

@@ -70,6 +70,50 @@ async function initSchema() {
   }
 }
 
+/**
+ * 为已有表添加唯一约束
+ * 先清理重复数据，再添加约束
+ */
+async function addUniqueConstraints() {
+  const conn = getPool();
+
+  // accounts 表：email 唯一
+  try {
+    // 先清理重复邮箱（保留 id 最大的）
+    await conn.query(`
+      DELETE a1 FROM accounts a1
+      INNER JOIN accounts a2
+      WHERE a1.email = a2.email AND a1.id < a2.id
+    `);
+    await conn.query('ALTER TABLE `accounts` ADD UNIQUE INDEX `uk_accounts_email` (`email`)');
+    console.log('[DB] 添加唯一约束: accounts.email');
+  } catch (err) {
+    if (err.errno !== 1061) { // 1061 = Duplicate key name (已存在)
+      // 1062 = Duplicate entry (还有重复数据)
+      if (err.errno === 1062) {
+        console.warn('[DB] accounts 表仍有重复邮箱，跳过添加约束');
+      }
+    }
+  }
+
+  // notifications 表：userId + type 唯一
+  try {
+    await conn.query(`
+      DELETE n1 FROM notifications n1
+      INNER JOIN notifications n2
+      WHERE n1.userId = n2.userId AND n1.type = n2.type AND n1.id < n2.id
+    `);
+    await conn.query('ALTER TABLE `notifications` ADD UNIQUE INDEX `uk_notifications_user_type` (`userId`, `type`)');
+    console.log('[DB] 添加唯一约束: notifications(userId, type)');
+  } catch (err) {
+    if (err.errno !== 1061) {
+      if (err.errno === 1062) {
+        console.warn('[DB] notifications 表仍有重复数据，跳过添加约束');
+      }
+    }
+  }
+}
+
 async function loadAll() {
   const conn = getPool();
   const data = {};
@@ -184,6 +228,9 @@ async function initDB() {
 
   await initSchema();
   console.log('[DB] Schema ready');
+
+  // 添加唯一约束（去重后再加，避免已有重复数据导致失败）
+  await addUniqueConstraints();
 
   const { data, dirty } = await loadAll();
   console.log('[DB] Loaded: ' + TABLES.map(t => t + '=' + data[t].length).join(', '));

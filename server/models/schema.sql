@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS `accounts` (
   `lastError` VARCHAR(500) DEFAULT NULL,
   `createdAt` VARCHAR(30) DEFAULT NULL,
   `updatedAt` VARCHAR(30) DEFAULT NULL,
+  UNIQUE KEY `uk_accounts_email` (`email`),
   INDEX `idx_accounts_userId` (`userId`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS `notifications` (
   `active` TINYINT(1) DEFAULT 1,
   `createdAt` VARCHAR(30) DEFAULT NULL,
   `updatedAt` VARCHAR(30) DEFAULT NULL,
+  UNIQUE KEY `uk_notifications_user_type` (`userId`, `type`),
   INDEX `idx_notifications_userId` (`userId`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

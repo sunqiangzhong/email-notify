@@ -81,20 +81,7 @@ const NOTIFICATION_TYPES = {
 async function getNotifications(req, res, next) {
   try {
     const db = getDB();
-    const notifications = db.data.notifications
-      .filter(n => n.userId === req.userId)
-      .map(n => ({
-        ...n,
-        // 隐藏敏感字段
-        config: Object.fromEntries(
-          Object.entries(n.config || {}).map(([k, v]) => {
-            if (['appSecret', 'secret', 'botToken', 'sendKey'].includes(k) && v) {
-              return [k, '••••••'];
-            }
-            return [k, v];
-          })
-        ),
-      }));
+    const notifications = db.data.notifications.filter(n => n.userId === req.userId);
     res.json({ success: true, data: notifications });
   } catch (err) {
     next(err);
