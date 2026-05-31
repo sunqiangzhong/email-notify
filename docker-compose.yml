@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: sunqz/email-notify:latest
-    container_name: email-notify-allinone
+    container_name: email-notify
     restart: unless-stopped
     ports:
       - "5111:80"
