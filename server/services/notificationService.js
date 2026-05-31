@@ -1,6 +1,6 @@
 /**
  * 通知服务
- * 
+ *
  * 支持多种通知渠道:
  * - 企业微信应用 (wecom_app)
  * - 企业微信群机器人 (wecom_webhook)
@@ -13,6 +13,7 @@
 const axios = require('axios');
 const crypto = require('crypto');
 const { getDB } = require('../models/db');
+const { createProxyAgent } = require('./proxyService');
 
 /**
  * 检查邮件是否匹配过滤规则
@@ -73,7 +74,7 @@ function buildMessageContent(emailData, format = 'markdown') {
 /**
  * 发送企业微信应用消息
  */
-async function sendWecomApp(config, emailData) {
+async function sendWecomApp(config, emailData, axiosConfig = {}) {
   const { corpId, agentId, appSecret, proxyUrl } = config;
   const baseUrl = proxyUrl || 'https://qyapi.weixin.qq.com';
 
@@ -81,6 +82,7 @@ async function sendWecomApp(config, emailData) {
   const tokenRes = await axios.get(`${baseUrl}/cgi-bin/gettoken`, {
     params: { corpid: corpId, corpsecret: appSecret },
     timeout: 10000,
+    ...axiosConfig,
   });
 
   if (tokenRes.data.errcode !== 0) {
@@ -96,7 +98,10 @@ async function sendWecomApp(config, emailData) {
     msgtype: 'markdown',
     agentid: parseInt(agentId),
     markdown: { content },
-  }, { timeout: 10000 });
+  }, {
+    timeout: 10000,
+    ...axiosConfig,
+  });
 
   if (sendRes.data.errcode !== 0) {
     throw new Error(`发送消息失败: ${sendRes.data.errmsg}`);
@@ -108,7 +113,7 @@ async function sendWecomApp(config, emailData) {
 /**
  * 发送企业微信群机器人消息
  */
-async function sendWecomWebhook(config, emailData) {
+async function sendWecomWebhook(config, emailData, axiosConfig = {}) {
   const { webhookUrl, mentionedList } = config;
   const content = buildMessageContent(emailData, 'markdown');
 
@@ -121,7 +126,10 @@ async function sendWecomWebhook(config, emailData) {
     payload.markdown.mentioned_list = mentionedList.split(',').map(s => s.trim());
   }
 
-  const res = await axios.post(webhookUrl, payload, { timeout: 10000 });
+  const res = await axios.post(webhookUrl, payload, {
+    timeout: 10000,
+    ...axiosConfig,
+  });
 
   if (res.data.errcode !== 0) {
     throw new Error(`发送消息失败: ${res.data.errmsg}`);
@@ -133,7 +141,7 @@ async function sendWecomWebhook(config, emailData) {
 /**
  * 发送 Server酱 消息
  */
-async function sendServerChan(config, emailData) {
+async function sendServerChan(config, emailData, axiosConfig = {}) {
   const { sendKey, channel } = config;
   const title = emailData.subject.substring(0, 50);
   const content = buildMessageContent(emailData, 'markdown');
@@ -142,7 +150,10 @@ async function sendServerChan(config, emailData) {
     title,
     desp: content,
     channel: channel || '9',
-  }, { timeout: 10000 });
+  }, {
+    timeout: 10000,
+    ...axiosConfig,
+  });
 
   if (res.data.code !== 0) {
     throw new Error(`发送消息失败: ${res.data.message}`);
@@ -154,7 +165,7 @@ async function sendServerChan(config, emailData) {
 /**
  * 发送 Telegram 消息
  */
-async function sendTelegram(config, emailData) {
+async function sendTelegram(config, emailData, axiosConfig = {}) {
   const { botToken, chatId, apiProxy } = config;
   const baseUrl = apiProxy || 'https://api.telegram.org';
   const content = buildMessageContent(emailData, 'markdown');
@@ -163,7 +174,10 @@ async function sendTelegram(config, emailData) {
     chat_id: chatId,
     text: content,
     parse_mode: 'Markdown',
-  }, { timeout: 10000 });
+  }, {
+    timeout: 10000,
+    ...axiosConfig,
+  });
 
   if (!res.data.ok) {
     throw new Error(`发送消息失败: ${res.data.description}`);
@@ -175,7 +189,7 @@ async function sendTelegram(config, emailData) {
 /**
  * 发送钉钉机器人消息
  */
-async function sendDingtalk(config, emailData) {
+async function sendDingtalk(config, emailData, axiosConfig = {}) {
   const { webhookUrl, secret } = config;
   const content = buildMessageContent(emailData, 'markdown');
 
@@ -193,7 +207,10 @@ async function sendDingtalk(config, emailData) {
       title: emailData.subject.substring(0, 50),
       text: content,
     },
-  }, { timeout: 10000 });
+  }, {
+    timeout: 10000,
+    ...axiosConfig,
+  });
 
   if (res.data.errcode !== 0) {
     throw new Error(`发送消息失败: ${res.data.errmsg}`);
@@ -205,7 +222,7 @@ async function sendDingtalk(config, emailData) {
 /**
  * 发送飞书机器人消息
  */
-async function sendFeishu(config, emailData) {
+async function sendFeishu(config, emailData, axiosConfig = {}) {
   const { webhookUrl, secret } = config;
   const content = buildMessageContent(emailData, 'text');
 
@@ -223,7 +240,10 @@ async function sendFeishu(config, emailData) {
   payload.msg_type = 'text';
   payload.content = { text: content };
 
-  const res = await axios.post(url, payload, { timeout: 10000 });
+  const res = await axios.post(url, payload, {
+    timeout: 10000,
+    ...axiosConfig,
+  });
 
   if (res.data.code !== 0) {
     throw new Error(`发送消息失败: ${res.data.msg}`);
@@ -235,7 +255,7 @@ async function sendFeishu(config, emailData) {
 /**
  * 发送自定义 Webhook 消息
  */
-async function sendCustomWebhook(config, emailData) {
+async function sendCustomWebhook(config, emailData, axiosConfig = {}) {
   const { webhookUrl, method, headers, bodyTemplate } = config;
 
   let body;
@@ -259,6 +279,7 @@ async function sendCustomWebhook(config, emailData) {
       'Content-Type': 'application/json',
       ...(headers ? JSON.parse(headers) : {}),
     },
+    ...axiosConfig,
   };
 
   if (method === 'GET') {
@@ -279,25 +300,43 @@ async function sendCustomWebhook(config, emailData) {
 /**
  * 根据通知类型发送消息
  */
-async function sendByType(type, config, emailData) {
+async function sendByType(type, config, emailData, proxyAgent) {
+  const axiosConfig = proxyAgent ? {
+    httpAgent: proxyAgent,
+    httpsAgent: proxyAgent,
+  } : {};
+
   switch (type) {
     case 'wecom_app':
-      return sendWecomApp(config, emailData);
+      return sendWecomApp(config, emailData, axiosConfig);
     case 'wecom_webhook':
-      return sendWecomWebhook(config, emailData);
+      return sendWecomWebhook(config, emailData, axiosConfig);
     case 'server_chan':
-      return sendServerChan(config, emailData);
+      return sendServerChan(config, emailData, axiosConfig);
     case 'telegram':
-      return sendTelegram(config, emailData);
+      return sendTelegram(config, emailData, axiosConfig);
     case 'dingtalk':
-      return sendDingtalk(config, emailData);
+      return sendDingtalk(config, emailData, axiosConfig);
     case 'feishu':
-      return sendFeishu(config, emailData);
+      return sendFeishu(config, emailData, axiosConfig);
     case 'custom_webhook':
-      return sendCustomWebhook(config, emailData);
+      return sendCustomWebhook(config, emailData, axiosConfig);
     default:
       throw new Error(`不支持的通知渠道类型: ${type}`);
   }
+}
+
+/**
+ * 获取用户的代理 Agent
+ */
+function getUserProxyAgent(userId) {
+  const db = getDB();
+  const proxy = db.data.proxies.find(p => p.userId === userId);
+  if (proxy) {
+    console.log(`[NOTIFY] Using proxy for notifications: ${proxy.name} (${proxy.type}://${proxy.host}:${proxy.port})`);
+    return createProxyAgent(proxy);
+  }
+  return null;
 }
 
 /**
@@ -328,11 +367,14 @@ async function processNotification(userId, emailData, logId) {
     }
   }
 
+  // 获取用户的代理配置
+  const proxyAgent = getUserProxyAgent(userId);
+
   // 发送到所有活跃的通知渠道
   let lastResult = null;
   for (const notification of notifications) {
     try {
-      const result = await sendByType(notification.type, notification.config, emailData);
+      const result = await sendByType(notification.type, notification.config, emailData, proxyAgent);
       if (result.success) {
         console.log(`[NOTIFY] Notification sent via ${result.target}`);
         lastResult = result;

@@ -1,7 +1,8 @@
 /**
  * Mail Service - Core Engine (IMAP IDLE mode)
+ * 使用 imapflow 替代 imap-simple，提供更稳定的 IDLE 连接
  */
-const imaps = require('imap-simple');
+const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const { EventEmitter } = require('events');
 const { getDB } = require('../models/db');
@@ -9,7 +10,7 @@ const { createProxyAgent } = require('./proxyService');
 const { processNotification } = require('./notificationService');
 const config = require('../config');
 
-// 日期解析失败时的 fallback：老邮件用极早时间，避免被误排到最前面
+// 日期解析失败时的 fallback
 const OLD_DATE_FALLBACK = '2000-01-01T00:00:00.000Z';
 
 const connectionPool = new Map();
@@ -17,34 +18,45 @@ const emailEmitter = new EventEmitter();
 emailEmitter.setMaxListeners(50);
 let backgroundSyncTimer = null;
 
+// 构建 ImapFlow 配置
 function buildImapConfig(account, proxyConfig) {
   const imapConfig = {
-    imap: {
+    host: account.imapHost,
+    port: account.imapPort || 993,
+    secure: account.useSSL !== false,
+    auth: {
       user: account.email,
-      password: account.password,
-      host: account.imapHost,
-      port: account.imapPort || 993,
-      tls: account.useSSL !== false,
-      tlsOptions: {
-        rejectUnauthorized: false,
-        // 降低 TLS 版本要求，提高兼容性
-        minVersion: 'TLSv1',
-        maxVersion: 'TLSv1.3',
-        // 增加密码套件兼容性
-        ciphers: 'DEFAULT@SECLEVEL=1',
-      },
-      authTimeout: config.imapConnectTimeout,
-      connTimeout: config.imapConnectTimeout,
-      keepalive: {
-        idleInterval: config.idleReissueInterval || 1740000,
-        forceNoop: false,
-      },
+      pass: account.password,
     },
+    tls: {
+      rejectUnauthorized: false,
+      minVersion: 'TLSv1',
+    },
+    connectionTimeout: config.imapConnectTimeout || 30000,
+    greetingTimeout: config.imapConnectTimeout || 30000,
+    socketTimeout: config.imapConnectTimeout || 30000,
+    logger: false,
+    emitLogs: false,
   };
+
+  // 添加代理支持（imapflow 原生支持 SOCKS/HTTP 代理）
   if (proxyConfig) {
-    const agent = createProxyAgent(proxyConfig);
-    if (agent) imapConfig.imap.agent = agent;
+    const { type, host, port, username, password } = proxyConfig;
+    let proxyUrl = '';
+
+    if (type === 'socks5' || type === 'socks4') {
+      const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password || '')}@` : '';
+      proxyUrl = `${type}://${auth}${host}:${port}`;
+    } else if (type === 'http' || type === 'https') {
+      const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password || '')}@` : '';
+      proxyUrl = `http://${auth}${host}:${port}`;
+    }
+
+    if (proxyUrl) {
+      imapConfig.proxy = proxyUrl;
+    }
   }
+
   return imapConfig;
 }
 
@@ -57,7 +69,6 @@ function getProxyForAccount(account) {
     }
     return proxy || null;
   }
-  // useProxy=false: do NOT silently fall back to a user-level proxy
   return null;
 }
 
@@ -130,126 +141,119 @@ function extractSingleValue(field) {
   return String(field);
 }
 
+// 从 imapflow 的 envelope 解析邮件信息
+function parseEnvelope(envelope) {
+  if (!envelope) return { fromName: '', fromAddress: '', subject: '(no subject)', date: new Date().toISOString() };
+
+  let fromName = '', fromAddress = '';
+  if (envelope.from && envelope.from.length > 0) {
+    fromName = envelope.from[0].name || '';
+    fromAddress = envelope.from[0].address || '';
+  }
+
+  let subject = envelope.subject || '(no subject)';
+  let date = envelope.date ? new Date(envelope.date).toISOString() : new Date().toISOString();
+
+  return { fromName, fromAddress, subject, date };
+}
+
 async function parseAndCacheEmails(messages, account) {
   const db = getDB();
   const { v4: uuidv4 } = require('uuid');
   const now = new Date().toISOString();
+  const newEmailIds = []; // 记录新插入邮件的 id 和 uid
+
   for (const msg of messages) {
-    const uid = msg.attributes.uid;
+    const uid = msg.uid;
     const exists = db.data.accountEmails.some(e => e.accountId === account.id && e.uid === uid);
     if (exists) continue;
+
     try {
-      const headerPart = msg.parts.find(p => p.which === 'HEADER');
-      if (!headerPart) continue;
-      const body = headerPart.body;
-      let fromName = '', fromAddress = '', toAddr = account.email, subject = '(no subject)', date = now;
-      if (Buffer.isBuffer(body) || typeof body === 'string') {
-        const parsed = await simpleParser(body);
+      let fromName = '', fromAddress = '', subject = '(no subject)', date = now;
+
+      // 优先使用 envelope（更快）
+      if (msg.envelope) {
+        const parsed = parseEnvelope(msg.envelope);
+        fromName = parsed.fromName;
+        fromAddress = parsed.fromAddress;
+        subject = parsed.subject;
+        date = parsed.date;
+      }
+      // 如果有 source，用 mailparser 解析
+      else if (msg.source) {
+        const parsed = await simpleParser(msg.source);
         const from = extractFirstAddress(parsed.from?.value);
-        fromName = from.name; fromAddress = from.address;
-        toAddr = extractFirstAddress(parsed.to?.value).address || account.email;
+        fromName = from.name;
+        fromAddress = from.address;
         subject = parsed.subject || '(no subject)';
         date = parsed.date instanceof Date && !isNaN(parsed.date.getTime())
           ? parsed.date.toISOString()
-          : parseEmailDate(extractSingleValue(body.date), OLD_DATE_FALLBACK);
-      } else if (body && typeof body === 'object') {
-        const from = extractFirstAddress(body.from);
-        fromName = from.name; fromAddress = from.address;
-        if (!fromAddress) {
-          try {
-            const rawHeader = reconstructRawHeader(body);
-            if (rawHeader) {
-              const parsed = await simpleParser(rawHeader);
-              const fallbackFrom = extractFirstAddress(parsed.from?.value);
-              fromName = fallbackFrom.name; fromAddress = fallbackFrom.address;
-              if (!toAddr || toAddr === account.email) {
-                toAddr = extractFirstAddress(parsed.to?.value).address || account.email;
-              }
-            }
-          } catch (_) {}
-        }
-        subject = extractSingleValue(body.subject) || '(no subject)';
-        date = parseEmailDate(extractSingleValue(body.date), OLD_DATE_FALLBACK);
-        if (!toAddr || toAddr === account.email) {
-          toAddr = extractFirstAddress(body.to).address || account.email;
-        }
-      } else {
-        continue;
+          : parseEmailDate(extractSingleValue(parsed.headers?.get('date')), OLD_DATE_FALLBACK);
       }
+
+      const emailId = uuidv4();
       db.data.accountEmails.push({
-        id: uuidv4(), accountId: account.id, userId: account.userId, uid,
-        fromName, fromAddress, to: toAddr, subject, date,
+        id: emailId, accountId: account.id, userId: account.userId, uid,
+        fromName, fromAddress, to: account.email, subject, date,
         hasAttachments: false, attachmentsCount: 0, fetchedAt: now,
       });
+      newEmailIds.push({ uid, emailId });
     } catch (parseErr) {
       console.error('[MAIL] parseAndCacheEmails error:', parseErr.message);
     }
   }
+
   await db.write();
-  const cached = db.data.accountEmails.filter(e => e.accountId === account.id);
-  const withSender = cached.filter(e => e.fromAddress).length;
-  console.log('[MAIL-CACHE] ' + account.email + ': ' + cached.length + ' total, ' + withSender + ' with sender info');
+  return newEmailIds;
 }
 
-function reconstructRawHeader(body) {
-  try {
-    const lines = [];
-    const fieldMap = {
-      from: 'From', to: 'To', cc: 'Cc', bcc: 'Bcc',
-      subject: 'Subject', date: 'Date', 'message-id': 'Message-ID',
-      'reply-to': 'Reply-To', 'return-path': 'Return-Path',
-    };
-    for (const [key, value] of Object.entries(body)) {
-      if (!value) continue;
-      const headerName = fieldMap[key.toLowerCase()] || key;
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          if (typeof item === 'string') {
-            lines.push(headerName + ': ' + item);
-          } else if (item && typeof item === 'object') {
-            if (item.address) {
-              const display = item.name ? '"' + item.name + '" <' + item.address + '>' : item.address;
-              lines.push(headerName + ': ' + display);
-            } else {
-              lines.push(headerName + ': ' + JSON.stringify(item));
-            }
-          }
-        }
-      } else if (typeof value === 'string') {
-        lines.push(headerName + ': ' + value);
-      } else if (typeof value === 'object' && value.address) {
-        const display = value.name ? '"' + value.name + '" <' + value.address + '>' : value.address;
-        lines.push(headerName + ': ' + display);
-      }
-    }
-    return lines.length > 0 ? lines.join('\r\n') + '\r\n' : null;
-  } catch (_) {
-    return null;
-  }
-}
-
-async function processNewMessage(msg, account, processedUIDs) {
+async function processNewMessage(msg, account, processedUIDs, emailIdMap) {
   const db = getDB();
-  const uid = msg.attributes.uid;
+  const uid = msg.uid;
   processedUIDs.add(uid);
-  const all = msg.parts.find(p => p.which === '');
-  if (!all) return;
-  const parsed = await simpleParser(all.body);
-  const from = extractFirstAddress(parsed.from?.value);
-  // 优先使用邮件 Date header，解析失败才用当前时间（新邮件场景 fallback 合理）
-  const emailDate = parsed.date instanceof Date && !isNaN(parsed.date.getTime())
-    ? parsed.date.toISOString()
-    : parseEmailDate(parsed.headers?.get('date')?.toString(), new Date().toISOString());
-  const emailData = {
-    uid,
-    subject: parsed.subject || '(no subject)',
-    senderName: from.name || from.address || 'unknown',
-    senderEmail: from.address || 'unknown',
-    toEmail: account.email,
-    snippet: (parsed.text || '').substring(0, 200).trim(),
-    receivedAt: emailDate,
-  };
+
+  let emailData;
+  try {
+    // 使用 envelope 获取基本信息
+    if (msg.envelope) {
+      const parsed = parseEnvelope(msg.envelope);
+      emailData = {
+        uid,
+        subject: parsed.subject,
+        senderName: parsed.fromName || parsed.fromAddress || 'unknown',
+        senderEmail: parsed.fromAddress || 'unknown',
+        toEmail: account.email,
+        snippet: '',
+        receivedAt: parsed.date,
+      };
+    }
+    // 使用 source 解析完整信息
+    else if (msg.source) {
+      const parsed = await simpleParser(msg.source);
+      const from = extractFirstAddress(parsed.from?.value);
+      const emailDate = parsed.date instanceof Date && !isNaN(parsed.date.getTime())
+        ? parsed.date.toISOString()
+        : parseEmailDate(parsed.headers?.get('date')?.toString(), new Date().toISOString());
+
+      emailData = {
+        uid,
+        subject: parsed.subject || '(no subject)',
+        senderName: from.name || from.address || 'unknown',
+        senderEmail: from.address || 'unknown',
+        toEmail: account.email,
+        snippet: (parsed.text || '').substring(0, 200).trim(),
+        receivedAt: emailDate,
+      };
+    } else {
+      return;
+    }
+  } catch (err) {
+    console.error('[MAIL] processNewMessage parse error:', err.message);
+    return;
+  }
+
   console.log('[MAIL] New email from ' + emailData.senderEmail + ': ' + emailData.subject);
+
   const { v4: uuidv4 } = require('uuid');
   const logEntry = {
     id: uuidv4(), userId: account.userId, accountId: account.id,
@@ -259,14 +263,16 @@ async function processNewMessage(msg, account, processedUIDs) {
   };
   db.data.emailLogs.push(logEntry);
   await db.write();
+
   processNotification(account.userId, emailData, logEntry.id);
 
-  // 从缓存中查找该邮件的完整 ID（用于前端去重）
-  const cachedEmail = db.data.accountEmails.find(e => e.accountId === account.id && e.uid === uid);
+  // 从 emailIdMap 中获取正确的 emailId
+  const emailIdEntry = emailIdMap ? emailIdMap.find(e => e.uid === uid) : null;
+  const emailId = emailIdEntry?.emailId || null;
 
   emailEmitter.emit('new_email', {
     userId: account.userId, accountId: account.id, accountEmail: account.email,
-    uid, logId: logEntry.id, emailId: cachedEmail?.id || null,
+    uid, logId: logEntry.id, emailId,
     subject: emailData.subject, senderName: emailData.senderName,
     senderEmail: emailData.senderEmail, toEmail: emailData.toEmail,
     receivedAt: emailData.receivedAt, snippet: emailData.snippet,
@@ -278,11 +284,9 @@ function cleanupPoolEntry(accountId) {
   if (!pool) return;
   if (pool.safetyTimer) clearInterval(pool.safetyTimer);
   if (pool.reconnectTimer) clearTimeout(pool.reconnectTimer);
-  if (pool.connection && pool.handlers) {
+  if (pool.client) {
     try {
-      pool.connection.removeListener('mail', pool.handlers.onMail);
-      pool.connection.removeListener('close', pool.handlers.onClose);
-      pool.connection.removeListener('error', pool.handlers.onError);
+      pool.client.close();
     } catch (_) {}
   }
   connectionPool.delete(accountId);
@@ -309,109 +313,183 @@ async function connectAndIdle(account) {
   const db = getDB();
   const proxyConfig = getProxyForAccount(account);
   const processedUIDs = new Set();
+
   try {
     console.log('[MAIL-IDLE] Connecting to ' + account.email + ' (' + account.imapHost + ')...');
+
     const imapConfig = buildImapConfig(account, proxyConfig);
-    const connection = await imaps.connect(imapConfig);
-    const rawConn = connection.imap || connection.source || connection;
-    rawConn.on('error', (err) => {
-      console.error('[MAIL-IDLE] Raw connection error for ' + account.email + ':', err.message);
-    });
+    const client = new ImapFlow(imapConfig);
+
+    // 连接
+    await client.connect();
+    console.log('[MAIL-IDLE] Connected to ' + account.email);
+
+    // 更新状态
     const dbAccount = db.data.accounts.find(a => a.id === account.id);
     if (dbAccount) {
       dbAccount.status = 'online';
       dbAccount.lastSync = new Date().toISOString();
       await db.write();
     }
-    console.log('[MAIL-IDLE] Connected to ' + account.email + ', opening INBOX...');
-    await connection.openBox('INBOX');
 
-    // Initial full scan
-    const headerFetchOptions = { bodies: ['HEADER'], markSeen: false, struct: false };
-    const initialMessages = await connection.search(['ALL'], headerFetchOptions);
+    // 打开 INBOX
+    const mailbox = await client.mailboxOpen('INBOX');
+    console.log('[MAIL-IDLE] Opened INBOX for ' + account.email + ', messages: ' + mailbox.exists);
+
+    // 初始扫描：获取所有邮件的 envelope
+    console.log('[MAIL-IDLE] ' + account.email + ': Starting initial scan...');
+    const initialMessages = [];
+    for await (const message of client.fetch('1:*', { uid: true, envelope: true })) {
+      initialMessages.push(message);
+      processedUIDs.add(message.uid);
+    }
+
     if (initialMessages.length > 0) {
-      for (const msg of initialMessages) processedUIDs.add(msg.attributes.uid);
-      const maxUID = Math.max(...initialMessages.map(m => m.attributes.uid));
-      console.log('[MAIL-IDLE] ' + account.email + ': Initial scan, ' + initialMessages.length + ' emails, latest UID=' + maxUID);
+      console.log('[MAIL-IDLE] ' + account.email + ': Initial scan, ' + initialMessages.length + ' emails');
+      // 清理旧的缓存
       const staleCount = db.data.accountEmails.filter(e => e.accountId === account.id && !e.fromAddress).length;
       if (staleCount > 0) {
         db.data.accountEmails = db.data.accountEmails.filter(e => !(e.accountId === account.id && !e.fromAddress));
-        console.log('[MAIL-IDLE] ' + account.email + ': Cleaned ' + staleCount + ' stale cache entries');
       }
       await parseAndCacheEmails(initialMessages, account);
     }
 
-    // IDLE mail event handler
-    const onMail = async (numNewMsgs) => {
-      console.log('[MAIL-IDLE] ' + account.email + ': IDLE detected ' + numNewMsgs + ' new message(s)');
+    // 监听新邮件事件（imapflow 的 'exists' 事件）
+    client.on('exists', async (data) => {
+      console.log('[MAIL-IDLE] ' + account.email + ': New message(s) detected, total: ' + data.count);
       try {
-        const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false, struct: true };
-        const messages = await connection.search(['ALL'], fetchOptions);
-        const newMessages = messages.filter(m => !processedUIDs.has(m.attributes.uid));
-        if (newMessages.length > 0) {
-          // 先更新缓存，再发通知（确保 SSE 推送时数据已就绪）
-          await parseAndCacheEmails(newMessages, account);
-          for (const msg of newMessages) await processNewMessage(msg, account, processedUIDs);
+        // 获取新邮件
+        const newMessages = [];
+        for await (const message of client.fetch('1:*', { uid: true, envelope: true })) {
+          if (!processedUIDs.has(message.uid)) {
+            newMessages.push(message);
+          }
         }
+
+        if (newMessages.length > 0) {
+          console.log('[MAIL-IDLE] ' + account.email + ': Found ' + newMessages.length + ' new message(s)');
+          // 先更新缓存，再发通知
+          const emailIdMap = await parseAndCacheEmails(newMessages, account);
+          for (const msg of newMessages) {
+            await processNewMessage(msg, account, processedUIDs, emailIdMap);
+          }
+        }
+
         const dbAcc = db.data.accounts.find(a => a.id === account.id);
-        if (dbAcc) { dbAcc.lastSync = new Date().toISOString(); await db.write(); }
+        if (dbAcc) {
+          dbAcc.lastSync = new Date().toISOString();
+          await db.write();
+        }
       } catch (err) {
         console.error('[MAIL-IDLE] Error processing new mail for ' + account.email + ':', err.message);
       }
-    };
+    });
 
-    const onClose = () => {
+    // 监听连接关闭
+    client.on('close', () => {
       console.log('[MAIL-IDLE] Connection closed for ' + account.email);
       cleanupPoolEntry(account.id);
       const dbAcc = db.data.accounts.find(a => a.id === account.id);
-      if (dbAcc) { dbAcc.status = 'reconnecting'; db.write().catch(() => {}); }
+      if (dbAcc) {
+        dbAcc.status = 'reconnecting';
+        db.write().catch(() => {});
+      }
       scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
-    };
+    });
 
-    const onError = (err) => {
+    // 监听错误（触发重连）
+    client.on('error', (err) => {
       console.error('[MAIL-IDLE] Connection error for ' + account.email + ':', err.message);
-    };
+      // 错误时触发重连
+      cleanupPoolEntry(account.id);
+      const dbAcc = db.data.accounts.find(a => a.id === account.id);
+      if (dbAcc) {
+        dbAcc.status = 'reconnecting';
+        dbAcc.lastError = err.message;
+        db.write().catch(() => {});
+      }
+      scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
+    });
 
-    connection.on('mail', onMail);
-    connection.on('close', onClose);
-    connection.on('error', onError);
+    // 保存到连接池
+    connectionPool.set(account.id, {
+      client, safetyTimer: null, reconnectTimer: null, status: 'idle',
+      account, processedUIDs, lastActivity: Date.now(),
+    });
 
-    // Safety poll (fallback for silent IDLE drops)
-    const safetyInterval = config.safetyPollInterval || 300000;
+    // 启动 IDLE（imapflow 自动管理）
+    console.log('[MAIL-IDLE] ' + account.email + ': IDLE active');
+
+    // 心跳检测 + Safety poll
+    const safetyInterval = config.safetyPollInterval || 120000; // 默认 2 分钟
     const safetyTimer = setInterval(async () => {
       try {
-        const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false, struct: true };
-        const messages = await connection.search(['ALL'], fetchOptions);
-        const newMessages = messages.filter(m => !processedUIDs.has(m.attributes.uid));
+        const pool = connectionPool.get(account.id);
+        if (!pool || pool.status !== 'idle') return;
+
+        // 检查连接是否还活着
+        if (!client.usable) {
+          console.log('[MAIL-IDLE] Connection not usable for ' + account.email + ', reconnecting...');
+          cleanupPoolEntry(account.id);
+          scheduleReconnect(account.id, 5000); // 5秒后重连
+          return;
+        }
+
+        // 更新活跃时间
+        pool.lastActivity = Date.now();
+
+        const newMessages = [];
+        for await (const message of client.fetch('1:*', { uid: true, envelope: true })) {
+          if (!processedUIDs.has(message.uid)) {
+            newMessages.push(message);
+          }
+        }
+
         if (newMessages.length > 0) {
           console.log('[MAIL-IDLE] Safety poll found ' + newMessages.length + ' new message(s) for ' + account.email);
-          await parseAndCacheEmails(newMessages, account);
-          for (const msg of newMessages) await processNewMessage(msg, account, processedUIDs);
+          const emailIdMap = await parseAndCacheEmails(newMessages, account);
+          for (const msg of newMessages) {
+            await processNewMessage(msg, account, processedUIDs, emailIdMap);
+          }
         }
+
         const dbAcc = db.data.accounts.find(a => a.id === account.id);
-        if (dbAcc) { dbAcc.lastSync = new Date().toISOString(); await db.write(); }
+        if (dbAcc) {
+          dbAcc.lastSync = new Date().toISOString();
+          await db.write();
+        }
       } catch (pollErr) {
         console.error('[MAIL-IDLE] Safety poll error for ' + account.email + ':', pollErr.message);
+        // 轮询出错时触发重连
+        cleanupPoolEntry(account.id);
+        scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
       }
     }, safetyInterval);
 
-    connectionPool.set(account.id, {
-      connection, safetyTimer, reconnectTimer: null, status: 'idle',
-      account, processedUIDs, handlers: { onMail, onClose, onError },
-    });
-    console.log('[MAIL-IDLE] ' + account.email + ': IDLE active, safety poll every ' + Math.round(safetyInterval / 1000) + 's');
+    // 更新 safetyTimer
+    const pool = connectionPool.get(account.id);
+    if (pool) pool.safetyTimer = safetyTimer;
+
   } catch (err) {
     const errMsg = err.message || String(err);
     const isAuth = errMsg.includes('Invalid credentials') || errMsg.includes('AUTHENTICATE') || errMsg.includes('auth') || errMsg.includes('LOGIN');
     const isTimeout = errMsg.includes('timeout') || errMsg.includes('ETIMEDOUT') || errMsg.includes('ECONNREFUSED');
     const isTls = errMsg.includes('SSL') || errMsg.includes('TLS') || errMsg.includes('certificate');
+
     let hint = '';
     if (isAuth) hint = ' → 请检查授权码/密码是否正确';
     else if (isTimeout) hint = ' → 连接超时，请检查网络或配置代理';
     else if (isTls) hint = ' → TLS/SSL 错误，请检查 SSL 设置';
+
     console.error('[MAIL-IDLE] Failed to connect to ' + account.email + ': ' + errMsg + hint);
+
     const dbAccount = db.data.accounts.find(a => a.id === account.id);
-    if (dbAccount) { dbAccount.status = 'error'; dbAccount.lastError = errMsg; await db.write(); }
+    if (dbAccount) {
+      dbAccount.status = 'error';
+      dbAccount.lastError = errMsg;
+      await db.write();
+    }
+
     scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
   }
 }
@@ -420,9 +498,11 @@ async function startAll() {
   const db = getDB();
   const activeAccounts = db.data.accounts.filter(a => a.active !== false);
   console.log('[MAIL-IDLE] Starting ' + activeAccounts.length + ' email IDLE connections...');
-  for (const account of activeAccounts) await connectAndIdle(account);
+  for (const account of activeAccounts) {
+    await connectAndIdle(account);
+  }
 
-  // Background sync: periodically re-scan all accounts as a fallback for IDLE failures
+  // Background sync
   const syncInterval = typeof config.backgroundSyncInterval === 'number' ? config.backgroundSyncInterval : 120000;
   if (syncInterval > 0) {
     backgroundSyncTimer = setInterval(async () => {
@@ -431,7 +511,7 @@ async function startAll() {
       for (const account of accounts) {
         try {
           await forceSyncAccount(account);
-        } catch (_) { /* logged inside forceSyncAccount */ }
+        } catch (_) {}
       }
     }, syncInterval);
     console.log('[MAIL-SYNC] Background sync enabled, interval=' + Math.round(syncInterval / 1000) + 's');
@@ -448,7 +528,7 @@ async function stopAll() {
     try {
       if (pool.safetyTimer) clearInterval(pool.safetyTimer);
       if (pool.reconnectTimer) clearTimeout(pool.reconnectTimer);
-      if (pool.connection && pool.connection.close) pool.connection.close();
+      if (pool.client) await pool.client.close();
       console.log('[MAIL-IDLE] Stopped connection for ' + pool.account.email);
     } catch (err) {
       console.error('[MAIL-IDLE] Error stopping connection ' + accountId + ':', err.message);
@@ -460,38 +540,35 @@ async function stopAll() {
 async function testConnection(accountData, proxyConfig) {
   const startTime = Date.now();
   const tlsStatus = accountData.useSSL !== false;
+
   try {
     const imapConfig = buildImapConfig(accountData, proxyConfig);
-    const connection = await imaps.connect(imapConfig);
+    const client = new ImapFlow(imapConfig);
+
+    await client.connect();
     const connectTime = Date.now() - startTime;
-    let serverGreeting = '';
-    try {
-      const rawConn = connection.imap || connection.source || connection;
-      if (rawConn && rawConn.serverGreeting) {
-        serverGreeting = typeof rawConn.serverGreeting === 'string'
-          ? rawConn.serverGreeting
-          : (rawConn.serverGreeting.text || String(rawConn.serverGreeting));
-      }
-    } catch (_) {}
-    const openStart = Date.now();
-    const box = await connection.openBox('INBOX');
-    const openTime = Date.now() - openStart;
-    const inboxTotal = box?.messages?.total ?? box?.total ?? 0;
-    const inboxUnseen = box?.messages?.new ?? box?.unseen ?? 0;
-    connection.end();
+
+    const mailbox = await client.mailboxOpen('INBOX');
+    const openTime = Date.now() - startTime - connectTime;
+
+    const inboxTotal = mailbox.exists || 0;
+
+    await client.close();
+
     const host = (accountData.imapHost || '').toLowerCase();
     let provider = 'custom';
     if (host.includes('qq')) provider = 'qq';
     else if (host.includes('gmail')) provider = 'gmail';
     else if (host.includes('outlook') || host.includes('hotmail')) provider = 'outlook';
     else if (host.includes('163')) provider = '163';
+
     return {
       success: true, message: '邮箱连接测试成功',
       data: {
         responseTime: connectTime, openTime, serverHost: accountData.imapHost,
-        serverPort: accountData.imapPort || 993, serverGreeting: serverGreeting || accountData.imapHost,
+        serverPort: accountData.imapPort || 993, serverGreeting: accountData.imapHost,
         tlsStatus, accountEmail: accountData.email, provider,
-        inbox: { total: inboxTotal, unseen: inboxUnseen },
+        inbox: { total: inboxTotal, unseen: 0 },
       },
     };
   } catch (err) {
@@ -519,6 +596,7 @@ async function fetchRecent(account, page, pageSize) {
   page = page || 1;
   pageSize = pageSize || 10;
   const db = getDB();
+
   const allEmails = db.data.accountEmails
     .filter(e => e.accountId === account.id)
     .sort((a, b) => {
@@ -529,34 +607,46 @@ async function fetchRecent(account, page, pageSize) {
       if (vb !== va) return vb - va;
       return (b.uid || 0) - (a.uid || 0);
     });
+
   const total = allEmails.length;
   const totalPages = Math.ceil(total / pageSize);
   const startIndex = (page - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, total);
   const pageEmails = allEmails.slice(startIndex, endIndex);
+
   const emails = pageEmails.map(e => ({
     uid: e.uid, id: e.id, fromName: e.fromName || '', fromAddress: e.fromAddress || '',
     to: e.to || account.email, subject: e.subject || '(no subject)', snippet: '',
     date: e.date, hasAttachments: e.hasAttachments || false, attachmentsCount: e.attachmentsCount || 0,
   }));
+
   return { emails, pagination: { page, pageSize, total, totalPages } };
 }
 
 async function fetchBody(account, uid) {
   const proxyConfig = getProxyForAccount(account);
+
   try {
     const imapConfig = buildImapConfig(account, proxyConfig);
-    const connection = await imaps.connect(imapConfig);
-    await connection.openBox('INBOX');
-    const searchCriteria = [['UID', uid + ':' + uid]];
-    const fetchOptions = { bodies: [''], markSeen: false, struct: true };
-    const messages = await connection.search(searchCriteria, fetchOptions);
-    connection.end();
+    const client = new ImapFlow(imapConfig);
+
+    await client.connect();
+    await client.mailboxOpen('INBOX');
+
+    // 获取邮件内容
+    const messages = [];
+    for await (const message of client.fetch({ uid: parseInt(uid) }, { uid: true, source: true })) {
+      messages.push(message);
+    }
+
+    await client.close();
+
     if (messages.length === 0) throw new Error('邮件不存在');
+
     const msg = messages[0];
-    const allPart = msg.parts.find(p => p.which === '');
-    if (!allPart) throw new Error('无法获取邮件内容');
-    const parsed = await simpleParser(allPart.body);
+    if (!msg.source) throw new Error('无法获取邮件内容');
+
+    const parsed = await simpleParser(msg.source);
     return {
       text: parsed.text || '', html: parsed.html || '',
       subject: parsed.subject || '', from: parsed.from?.text || '',
@@ -571,13 +661,14 @@ async function fetchBody(account, uid) {
 function getPoolStatus() {
   const status = {};
   const db = getDB();
+
   for (const [id, pool] of connectionPool) {
     status[id] = {
       email: pool.account.email, status: pool.status,
       mode: 'IDLE', processedCount: pool.processedUIDs ? pool.processedUIDs.size : 0,
     };
   }
-  // Include accounts not in pool (e.g. error/reconnecting) with lastError
+
   for (const account of db.data.accounts) {
     if (!status[account.id] && account.active !== false) {
       status[account.id] = {
@@ -587,44 +678,50 @@ function getPoolStatus() {
       };
     }
   }
+
   return status;
 }
 
-/**
- * Force re-scan an account's INBOX and update the cache.
- * Returns { total, newCount } so the caller can report the result.
- */
 async function forceSyncAccount(account) {
   const db = getDB();
   const proxyConfig = getProxyForAccount(account);
-  let connection;
+
   try {
     console.log('[MAIL-SYNC] Force sync started for ' + account.email);
-    const imapConfig = buildImapConfig(account, proxyConfig);
-    connection = await imaps.connect(imapConfig);
-    await connection.openBox('INBOX');
 
-    const fetchOptions = { bodies: ['HEADER', 'TEXT', ''], markSeen: false, struct: true };
-    const messages = await connection.search(['ALL'], fetchOptions);
+    const imapConfig = buildImapConfig(account, proxyConfig);
+    const client = new ImapFlow(imapConfig);
+
+    await client.connect();
+    await client.mailboxOpen('INBOX');
+
+    // 获取所有邮件
+    const messages = [];
+    for await (const message of client.fetch('1:*', { uid: true, envelope: true })) {
+      messages.push(message);
+    }
+
+    await client.close();
 
     const existingUIDs = new Set(
       db.data.accountEmails
         .filter(e => e.accountId === account.id)
         .map(e => e.uid)
     );
-    const newMessages = messages.filter(m => !existingUIDs.has(m.attributes.uid));
+
+    const newMessages = messages.filter(m => !existingUIDs.has(m.uid));
 
     if (newMessages.length > 0) {
       console.log('[MAIL-SYNC] ' + account.email + ': Found ' + newMessages.length + ' new emails to cache');
-      // 先更新缓存，再发通知（确保 SSE 推送时数据已就绪）
-      await parseAndCacheEmails(newMessages, account);
+      const emailIdMap = await parseAndCacheEmails(newMessages, account);
+
       const processedUIDs = new Set([...existingUIDs]);
       for (const msg of newMessages) {
-        await processNewMessage(msg, account, processedUIDs);
+        await processNewMessage(msg, account, processedUIDs, emailIdMap);
       }
     }
 
-    // Update account status
+    // 更新状态
     const dbAccount = db.data.accounts.find(a => a.id === account.id);
     if (dbAccount) {
       dbAccount.status = 'online';
@@ -645,10 +742,6 @@ async function forceSyncAccount(account) {
       await db.write();
     }
     throw err;
-  } finally {
-    if (connection) {
-      try { connection.end(); } catch (_) {}
-    }
   }
 }
 

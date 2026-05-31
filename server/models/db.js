@@ -25,12 +25,13 @@ function getPool() {
     pool = mysql.createPool({
       host: process.env.MYSQL_HOST || '127.0.0.1',
       port: parseInt(process.env.MYSQL_PORT || '3306', 10),
-      user: process.env.MYSQL_USER || 'root',
-      password: process.env.MYSQL_PASSWORD || '',
-      database: process.env.MYSQL_DATABASE || 'mul_email',
+      user: 'root',
+      password: 'mul_email_pass',
+      database: 'mul_email',
       waitForConnections: true,
       connectionLimit: 10,
       charset: 'utf8mb4',
+      connectTimeout: 10000,
     });
   }
   return pool;
@@ -96,6 +97,22 @@ async function loadAll() {
   return { data, dirty };
 }
 
+// 将 ISO datetime 转换为 MySQL datetime 格式
+function toMySQLDatetime(val) {
+  if (!val || typeof val !== 'string') return val;
+  // 处理 ISO 8601 格式 (2026-05-30T14:56:01.342Z)
+  if (val.includes('T') && val.includes('Z')) {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().slice(0, 19).replace('T', ' ');
+    }
+  }
+  return val;
+}
+
+// datetime 类型的列
+const DATETIME_COLUMNS = ['createdAt', 'updatedAt', 'lastSync', 'date', 'receivedAt', 'fetchedAt'];
+
 async function flushToMySQL(data, dirty) {
   if (dirty.size === 0) return;
   const conn = getPool();
@@ -126,6 +143,10 @@ async function flushToMySQL(data, dirty) {
           let val = row[col];
           if (jsonCols.includes(col) && val !== null && val !== undefined) {
             val = JSON.stringify(val);
+          }
+          // 转换 datetime 格式
+          if (DATETIME_COLUMNS.includes(col)) {
+            val = toMySQLDatetime(val);
           }
           values.push(val === undefined ? null : val);
         }

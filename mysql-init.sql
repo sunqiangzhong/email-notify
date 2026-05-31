@@ -1,21 +1,16 @@
 -- MySQL 初始化脚本
--- 创建数据库和用户
-
-CREATE DATABASE IF NOT EXISTS mul_email CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- 创建应用用户（允许从任何主机连接）
-CREATE USER IF NOT EXISTS 'mul_email'@'localhost' IDENTIFIED BY '${MYSQL_PASSWORD}';
-CREATE USER IF NOT EXISTS 'mul_email'@'%' IDENTIFIED BY '${MYSQL_PASSWORD}';
-
--- 授权
-GRANT ALL PRIVILEGES ON mul_email.* TO 'mul_email'@'localhost';
-GRANT ALL PRIVILEGES ON mul_email.* TO 'mul_email'@'%';
+-- 设置 root 密码
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'mul_email_pass';
+CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED WITH mysql_native_password BY 'mul_email_pass';
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 
--- 使用数据库
+-- 创建数据库
+CREATE DATABASE IF NOT EXISTS mul_email CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE mul_email;
 
--- 创建表结构（如果不存在）
+-- 创建表结构
 CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(36) PRIMARY KEY,
     username VARCHAR(255) UNIQUE NOT NULL,
@@ -25,6 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
     avatarColor VARCHAR(50),
     role VARCHAR(50) DEFAULT 'user',
     status VARCHAR(50) DEFAULT 'active',
+    disabled BOOLEAN DEFAULT FALSE,
     createdAt DATETIME,
     updatedAt DATETIME
 );
@@ -107,7 +103,7 @@ CREATE TABLE IF NOT EXISTS accountEmails (
     uid INT,
     fromName VARCHAR(255),
     fromAddress VARCHAR(255),
-    to VARCHAR(255),
+    `to` VARCHAR(255),
     subject VARCHAR(500),
     date DATETIME,
     hasAttachments BOOLEAN DEFAULT FALSE,

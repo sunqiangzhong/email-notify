@@ -14,7 +14,7 @@
     "jsonwebtoken": "^9.0.2",
     "bcryptjs": "^2.4.3",
     "mysql2": "^3.11.0",
-    "imap-simple": "^5.1.0",
+    "imapflow": "^1.0.160",
     "mailparser": "^3.7.1",
     "socks-proxy-agent": "^8.0.5",
     "https-proxy-agent": "^7.0.6",
