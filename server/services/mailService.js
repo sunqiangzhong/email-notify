@@ -279,7 +279,7 @@ async function processNewMessage(msg, account, processedUIDs, emailIdMap) {
   });
 }
 
-function cleanupPoolEntry(accountId) {
+function cleanupPoolEntry(accountId, keepEntry = false) {
   const pool = connectionPool.get(accountId);
   if (!pool) return;
   if (pool.safetyTimer) clearInterval(pool.safetyTimer);
@@ -289,12 +289,26 @@ function cleanupPoolEntry(accountId) {
       pool.client.close();
     } catch (_) {}
   }
-  connectionPool.delete(accountId);
+  if (!keepEntry) {
+    connectionPool.delete(accountId);
+  } else {
+    pool.client = null;
+    pool.safetyTimer = null;
+  }
 }
 
 function scheduleReconnect(accountId, delay) {
-  const pool = connectionPool.get(accountId);
-  if (!pool) return;
+  let pool = connectionPool.get(accountId);
+  if (!pool) {
+    const db = getDB();
+    const account = db.data.accounts.find(a => a.id === accountId);
+    if (!account) return;
+    pool = {
+      client: null, safetyTimer: null, reconnectTimer: null, status: 'reconnecting',
+      account, processedUIDs: new Set(),
+    };
+    connectionPool.set(accountId, pool);
+  }
   const jitter = Math.floor(Math.random() * 5000);
   const totalDelay = delay + jitter;
   console.log('[MAIL] Reconnecting ' + pool.account.email + ' in ' + Math.round(totalDelay / 1000) + 's...');
@@ -395,7 +409,7 @@ async function connectAndIdle(account) {
     // 监听连接关闭
     client.on('close', () => {
       console.log('[MAIL-IDLE] Connection closed for ' + account.email);
-      cleanupPoolEntry(account.id);
+      cleanupPoolEntry(account.id, true);
       const dbAcc = db.data.accounts.find(a => a.id === account.id);
       if (dbAcc) {
         dbAcc.status = 'reconnecting';
@@ -408,7 +422,7 @@ async function connectAndIdle(account) {
     client.on('error', (err) => {
       console.error('[MAIL-IDLE] Connection error for ' + account.email + ':', err.message);
       // 错误时触发重连
-      cleanupPoolEntry(account.id);
+      cleanupPoolEntry(account.id, true);
       const dbAcc = db.data.accounts.find(a => a.id === account.id);
       if (dbAcc) {
         dbAcc.status = 'reconnecting';
@@ -437,7 +451,7 @@ async function connectAndIdle(account) {
         // 检查连接是否还活着
         if (!client.usable) {
           console.log('[MAIL-IDLE] Connection not usable for ' + account.email + ', reconnecting...');
-          cleanupPoolEntry(account.id);
+          cleanupPoolEntry(account.id, true);
           scheduleReconnect(account.id, 5000); // 5秒后重连
           return;
         }
@@ -473,7 +487,7 @@ async function connectAndIdle(account) {
       } catch (pollErr) {
         console.error('[MAIL-IDLE] Safety poll error for ' + account.email + ':', pollErr.message);
         // 轮询出错时触发重连
-        cleanupPoolEntry(account.id);
+        cleanupPoolEntry(account.id, true);
         scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
       }
     }, safetyInterval);
