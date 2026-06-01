@@ -258,6 +258,9 @@ async function hasDockerAccess() {
 /**
  * 执行自动更新
  */
+/**
+ * 执行自动更新
+ */
 async function performUpdate() {
   const updateLog = [];
 
@@ -268,6 +271,77 @@ async function performUpdate() {
     const { promisify } = require('util');
     const execAsync = promisify(exec);
 
+    const hasSocket = fs.existsSync('/var/run/docker.sock');
+
+    // 核心方案：如果在 Docker 容器中且挂载了 /var/run/docker.sock
+    if (hasSocket) {
+      updateLog.push({ time: new Date().toISOString(), message: '检测到 /var/run/docker.sock，将采用高可靠性的自动自我重建升级方案...' });
+
+      // 1. 获取当前容器 ID（从 hostname 读取）
+      const { stdout: containerIdRaw } = await execAsync('hostname');
+      const containerId = containerIdRaw.trim();
+      updateLog.push({ time: new Date().toISOString(), message: `获取当前容器 ID 成功: ${containerId}` });
+
+      // 2. 拉取升级执行助手镜像 (containrrr/watchtower)
+      updateLog.push({ time: new Date().toISOString(), message: '正在拉取升级执行助手镜像 (containrrr/watchtower:latest)...' });
+      try {
+        await execAsync('curl -s --unix-socket /var/run/docker.sock -X POST "http://localhost/images/create?fromImage=containrrr/watchtower&tag=latest"', { timeout: 120000 });
+        updateLog.push({ time: new Date().toISOString(), message: '升级执行助手镜像拉取成功' });
+      } catch (err) {
+        throw new Error(`拉取升级助手镜像失败: ${err.message}`);
+      }
+
+      // 3. 准备 Watchtower 容器配置，命令它自我销毁（AutoRemove）并对我们的容器执行单次强制升级重建
+      updateLog.push({ time: new Date().toISOString(), message: '正在配置升级任务...' });
+      const createPayload = {
+        Image: 'containrrr/watchtower',
+        Cmd: ['--run-once', '--cleanup', '--force-update', containerId],
+        HostConfig: {
+          Binds: ['/var/run/docker.sock:/var/run/docker.sock'],
+          AutoRemove: true
+        }
+      };
+
+      const tempContainerName = `email-notify-updater-${Math.floor(Math.random() * 10000)}`;
+      const curlCreateCmd = `curl -s --unix-socket /var/run/docker.sock -X POST -H "Content-Type: application/json" -d '${JSON.stringify(createPayload)}' "http://localhost/containers/create?name=${tempContainerName}"`;
+
+      let createResult;
+      try {
+        const { stdout: createOutput } = await execAsync(curlCreateCmd);
+        createResult = JSON.parse(createOutput);
+        if (!createResult.Id) {
+          throw new Error(createOutput);
+        }
+        updateLog.push({ time: new Date().toISOString(), message: '升级服务任务配置并创建成功' });
+      } catch (err) {
+        throw new Error(`创建升级服务任务失败: ${err.message}`);
+      }
+
+      // 4. 延迟 1.5 秒启动 Watchtower，给当前的 Node.js HTTP 响应留出充足的成功发送时间
+      updateLog.push({ time: new Date().toISOString(), message: '升级指令准备就绪！容器将在 1.5 秒后自动关闭，并由宿主机拉取最新 email-notify 镜像并重建启动...' });
+
+      setTimeout(async () => {
+        console.log('[UPDATE] 正在启动 Watchtower 升级助手...');
+        try {
+          await execAsync(`curl -s --unix-socket /var/run/docker.sock -X POST "http://localhost/containers/${tempContainerName}/start"`);
+          console.log('[UPDATE] Watchtower 升级助手启动成功，正在重建本容器...');
+        } catch (err) {
+          console.error('[UPDATE] 启动 Watchtower 升级助手失败:', err.message);
+        }
+      }, 1500);
+
+      updateLog.push({ time: new Date().toISOString(), message: '更新任务就绪，正在传输升级日志。请等待大约 30-60 秒，系统重建完毕后手动刷新或等待网页自动重载。' });
+
+      return {
+        success: true,
+        message: '更新已执行，正在启动自我重建...',
+        log: updateLog,
+      };
+    }
+
+    // 备用方案：宿主机直部署（如非容器化部署或未挂载 socket 的传统重载方案）
+    updateLog.push({ time: new Date().toISOString(), message: '未挂载 /var/run/docker.sock，将采用普通拉取与重载方案（不一定能成功重建容器，推荐挂载 socket）...' });
+
     // 1. 拉取最新镜像
     updateLog.push({ time: new Date().toISOString(), message: '正在拉取最新镜像...' });
     let pulled = false;
@@ -276,50 +350,22 @@ async function performUpdate() {
       updateLog.push({ time: new Date().toISOString(), message: `镜像拉取完成: ${pullOutput.trim()}` });
       pulled = true;
     } catch (e) {
-      // 降级：如果没安装 docker 命令行，但有 docker.sock，使用 curl unix socket API 拉取
-      if (fs.existsSync('/var/run/docker.sock')) {
-        try {
-          updateLog.push({ time: new Date().toISOString(), message: '未检测到 docker 命令行，正在尝试通过 Docker Socket API 拉取镜像...' });
-          await execAsync('curl -s --unix-socket /var/run/docker.sock -X POST "http://localhost/images/create?fromImage=sunqz/email-notify&tag=latest"', { timeout: 120000 });
-          updateLog.push({ time: new Date().toISOString(), message: '镜像拉取成功（通过 Socket API）' });
-          pulled = true;
-        } catch (sockErr) {
-          console.error('[UPDATE] Socket API 拉取失败:', sockErr.message);
-        }
-      }
-      if (!pulled) {
-        throw new Error(`拉取镜像失败: ${e.message}`);
-      }
+      throw new Error(`拉取镜像失败: ${e.message}`);
     }
 
-    // 2. 异步重启容器 (延迟 1.5 秒以确保 HTTP 成功响应和拉取日志能完整送达前端)
+    // 2. 异步重启
     updateLog.push({ time: new Date().toISOString(), message: '镜像拉取完成！已发出重启指令，容器将在 1.5 秒后自动重启。' });
-
     setTimeout(async () => {
       console.log('[UPDATE] 正在执行延迟重启以应用新版本...');
       try {
         await execAsync('docker compose up -d', { timeout: 60000 });
       } catch (e) {
-        // 优先尝试通过 Unix Socket 重启自身
-        let restarted = false;
-        if (fs.existsSync('/var/run/docker.sock')) {
-          try {
-            const { stdout: containerId } = await execAsync('hostname');
-            const containerName = containerId.trim();
-            await execAsync(`curl -s --unix-socket /var/run/docker.sock -X POST "http://localhost/containers/${containerName}/restart"`, { timeout: 60000 });
-            restarted = true;
-          } catch (sockErr) {
-            console.error('[UPDATE] 异步 Socket API 重启失败:', sockErr.message);
-          }
-        }
-        if (!restarted) {
-          try {
-            const { stdout: containerId } = await execAsync('hostname');
-            const containerName = containerId.trim();
-            await execAsync(`docker restart ${containerName}`, { timeout: 60000 });
-          } catch (cliErr) {
-            console.error('[UPDATE] 异步 CLI 重启失败:', cliErr.message);
-          }
+        try {
+          const { stdout: containerId } = await execAsync('hostname');
+          const containerName = containerId.trim();
+          await execAsync(`docker restart ${containerName}`, { timeout: 60000 });
+        } catch (cliErr) {
+          console.error('[UPDATE] 异步 CLI 重启失败:', cliErr.message);
         }
       }
     }, 1500);
