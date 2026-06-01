@@ -14,6 +14,7 @@ const {
   deleteFilter,
   getNotificationTypes,
   debugNotifications,
+  createWechatMenus,
 } = require('../controllers/notificationsController');
 
 router.use(authMiddleware);
@@ -28,6 +29,7 @@ router.get('/debug', debugNotifications);
 router.get('/', getNotifications);
 router.post('/', createNotification);
 router.post('/:id/test', testSend);
+router.post('/:id/wechat-menus', createWechatMenus);
 router.get('/:id', getNotificationById);
 router.put('/:id', updateNotification);
 router.delete('/:id', deleteNotification);

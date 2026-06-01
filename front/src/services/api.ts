@@ -396,6 +396,12 @@ export const notificationApi = {
     });
   },
 
+  createWechatMenus: async (id: string) => {
+    return request<{ success: boolean; message: string }>(`/notifications/${id}/wechat-menus`, {
+      method: 'POST',
+    });
+  },
+
   // 获取通知类型配置（包含所有支持的通知渠道及其配置项）
   getTypes: async () => {
     return request<{ success: boolean; data: Record<string, { name: string; description: string; fields: Array<{ key: string; label: string; required: boolean; hint: string; default?: string }> }> }>('/notifications/types');

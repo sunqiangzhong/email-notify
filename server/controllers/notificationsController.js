@@ -5,6 +5,7 @@
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const notificationService = require('../services/notificationService');
+const wechatCommandService = require('../services/wechatCommandService');
 
 // 通知渠道类型配置
 const NOTIFICATION_TYPES = {
@@ -192,6 +193,16 @@ async function createNotification(req, res, next) {
     db.data.notifications.push(notification);
     await db.write('notifications');
 
+    // 如果是启用的企业微信自建应用，自动注册自定义菜单
+    if (notification.type === 'wecom_app' && notification.active) {
+      const { corpId, appSecret, agentId } = notification.config || {};
+      if (corpId && appSecret && agentId) {
+        wechatCommandService.createMenus(notification.config).catch(err => {
+          console.error('[WECHAT] 自动创建菜单失败:', err.message);
+        });
+      }
+    }
+
     res.status(201).json({ success: true, code: 'NOTIFICATION_CREATED', message: '通知渠道创建成功', data: notification });
   } catch (err) {
     next(err);
@@ -286,6 +297,16 @@ async function updateNotification(req, res, next) {
     notification.updatedAt = new Date().toISOString();
 
     await db.write('notifications');
+
+    // 如果是启用的企业微信自建应用，自动更新/注册自定义菜单
+    if (notification.type === 'wecom_app' && notification.active) {
+      const { corpId, appSecret, agentId } = notification.config || {};
+      if (corpId && appSecret && agentId) {
+        wechatCommandService.createMenus(notification.config).catch(err => {
+          console.error('[WECHAT] 自动更新菜单失败:', err.message);
+        });
+      }
+    }
 
     res.json({ success: true, code: 'NOTIFICATION_UPDATED', message: '通知渠道更新成功', data: notification });
   } catch (err) {
@@ -482,6 +503,42 @@ async function debugNotifications(req, res, next) {
   }
 }
 
+/**
+ * POST /api/notifications/:id/wechat-menus
+ * 注册企业微信自建应用自定义菜单
+ */
+async function createWechatMenus(req, res, next) {
+  try {
+    const db = getDB();
+    const notification = db.data.notifications.find(n => n.id === req.params.id && n.userId === req.userId);
+
+    if (!notification) {
+      return res.status(404).json({ success: false, code: 'NOTIFICATION_NOT_FOUND', message: '通知渠道不存在' });
+    }
+
+    if (notification.type !== 'wecom_app') {
+      return res.status(400).json({ success: false, code: 'INVALID_CHANNEL_TYPE', message: '该通知渠道不是企业微信应用，无法创建自定义菜单' });
+    }
+
+    const { corpId, appSecret, agentId } = notification.config || {};
+    if (!corpId || !appSecret || !agentId) {
+      return res.status(400).json({ success: false, code: 'MISSING_CONFIG', message: '企业微信应用配置不完整，创建菜单需要填写 企业ID (CorpID), 应用 AgentId 以及 应用 Secret' });
+    }
+
+    console.log(`[WECHAT] 手动注册企业微信自定义菜单，channelId=${notification.id}`);
+    const success = await wechatCommandService.createMenus(notification.config);
+
+    if (success) {
+      res.json({ success: true, message: '企业微信自定义菜单创建/重置成功！' });
+    } else {
+      res.status(500).json({ success: false, message: '企业微信自定义菜单创建失败，请查看控制台日志' });
+    }
+  } catch (err) {
+    console.error('[WECHAT] 手动创建菜单失败:', err.message);
+    res.status(500).json({ success: false, code: 'WECHAT_MENU_ERROR', message: err.message });
+  }
+}
+
 module.exports = {
   getNotifications,
   getNotificationById,
@@ -495,5 +552,6 @@ module.exports = {
   deleteFilter,
   getNotificationTypes,
   debugNotifications,
+  createWechatMenus,
   NOTIFICATION_TYPES,
 };

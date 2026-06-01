@@ -39,6 +39,8 @@ export default function WeChatNotificationsView({ triggerToast }: Props) {
   const [loading, setLoading] = useState(true);
   // 测试状态
   const [testingId, setTestingId] = useState<string | null>(null);
+  // 微信菜单注册状态
+  const [syncingId, setSyncingId] = useState<string | null>(null);
   // 展开的通知 ID
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -144,6 +146,24 @@ export default function WeChatNotificationsView({ triggerToast }: Props) {
       triggerToast('测试失败: ' + error.message, 'error');
     } finally {
       setTestingId(null);
+    }
+  };
+
+  // 手动注册微信菜单
+  const handleCreateWechatMenus = async (id: string) => {
+    setSyncingId(id);
+    try {
+      const result = await notificationApi.createWechatMenus(id);
+      if (result.success) {
+        triggerToast(result.message || '企业微信自定义菜单注册成功！', 'success');
+      } else {
+        triggerToast('注册失败: ' + result.message, 'error');
+      }
+    } catch (error: any) {
+      console.error('注册微信菜单失败:', error);
+      triggerToast('注册失败: ' + (error.message || '网络或服务器错误'), 'error');
+    } finally {
+      setSyncingId(null);
     }
   };
 
@@ -345,6 +365,32 @@ export default function WeChatNotificationsView({ triggerToast }: Props) {
                           ) : null
                         ))}
                       </div>
+
+                      {notif.type === 'wecom_app' && (
+                        <div className="mt-3 pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-[#161B22]/50 p-2.5 rounded border border-[#30363D]">
+                          <div className="space-y-0.5">
+                            <div className="text-[11px] font-semibold text-[#E6EDF3] flex items-center gap-1">
+                              <MessageSquareCode className="w-3.5 h-3.5 text-green-500" />
+                              <span>企业微信自定义菜单管理</span>
+                            </div>
+                            <p className="text-[10px] text-slate-500 max-w-md">
+                              点击下方按钮将系统状态、测试通知、账户列表等交互式功能注册到企业微信自建应用底部的自定义菜单中。
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              await handleCreateWechatMenus(notif.id);
+                            }}
+                            disabled={syncingId === notif.id}
+                            className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/30 text-[10px] font-semibold cursor-pointer disabled:opacity-50 select-none whitespace-nowrap"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${syncingId === notif.id ? 'animate-spin' : ''}`} />
+                            <span>{syncingId === notif.id ? '正在注册...' : '注册/同步应用菜单'}</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
