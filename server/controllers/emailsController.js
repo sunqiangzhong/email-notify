@@ -108,11 +108,18 @@ async function testAccount(req, res, next) {
       useSSL: useSSL !== undefined ? useSSL : preset.ssl,
     };
     let proxyConfig = null;
-    if (useProxy && proxyHost && proxyPort) {
-      proxyConfig = { host: proxyHost, port: proxyPort, type: proxyType || 'socks5' };
-    } else {
-      const db = getDB();
-      proxyConfig = db.data.proxies.find(p => p.userId === req.userId);
+    if (useProxy) {
+      if (proxyHost && proxyPort) {
+        proxyConfig = { host: proxyHost, port: proxyPort, type: proxyType || 'socks5' };
+      } else {
+        const db = getDB();
+        const proxyId = req.body.proxyId;
+        if (proxyId) {
+          proxyConfig = db.data.proxies.find(p => p.id === proxyId && p.userId === req.userId);
+        } else {
+          proxyConfig = db.data.proxies.find(p => p.userId === req.userId);
+        }
+      }
     }
     const result = await mailService.testConnection(accountData, proxyConfig);
     res.json(result);

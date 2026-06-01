@@ -42,12 +42,13 @@ function buildImapConfig(account, proxyConfig) {
   // 添加代理支持（imapflow 原生支持 SOCKS/HTTP 代理）
   if (proxyConfig) {
     const { type, host, port, username, password } = proxyConfig;
+    const normalizedType = (type || '').toLowerCase();
     let proxyUrl = '';
 
-    if (type === 'socks5' || type === 'socks4') {
+    if (normalizedType === 'socks5' || normalizedType === 'socks4') {
       const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password || '')}@` : '';
-      proxyUrl = `${type}://${auth}${host}:${port}`;
-    } else if (type === 'http' || type === 'https') {
+      proxyUrl = `${normalizedType}://${auth}${host}:${port}`;
+    } else if (normalizedType === 'http' || normalizedType === 'https') {
       const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password || '')}@` : '';
       proxyUrl = `http://${auth}${host}:${port}`;
     }

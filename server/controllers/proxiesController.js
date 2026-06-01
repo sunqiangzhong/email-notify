@@ -70,28 +70,17 @@ async function createProxy(req, res, next) {
 
     await db.write('proxies');
 
-    // 自动把代理应用到该用户的所有活跃邮箱账户
-    const userAccounts = db.data.accounts.filter(a => a.userId === req.userId && a.active !== false);
-    let linkedCount = 0;
-    for (const account of userAccounts) {
-      if (!account.useProxy || account.proxyId !== proxy.id) {
-        account.useProxy = true;
-        account.proxyId = proxy.id;
-        account.updatedAt = new Date().toISOString();
-        linkedCount++;
-      }
-    }
-    if (linkedCount > 0) {
-      await db.write('accounts');
-      // 重启已更新的账户以使代理生效
-      for (const account of userAccounts) {
-        try { await mailService.restartAccount(account.id); } catch (_) {}
-      }
+    // 重启已使用该代理的活跃账户以使更新生效
+    const affectedAccounts = db.data.accounts.filter(
+      a => a.userId === req.userId && a.active !== false && a.useProxy && a.proxyId === proxy.id
+    );
+    for (const account of affectedAccounts) {
+      try { await mailService.restartAccount(account.id); } catch (_) {}
     }
 
     const message = existing
-      ? '代理更新成功，已应用到 ' + linkedCount + ' 个邮箱账户'
-      : '代理创建成功，已应用到 ' + linkedCount + ' 个邮箱账户';
+      ? '代理更新成功'
+      : '代理创建成功';
     res.status(existing ? 200 : 201).json({ success: true, code: 'PROXY_SAVED', message, data: proxy });
   } catch (err) {
     next(err);
@@ -119,22 +108,12 @@ async function updateProxy(req, res, next) {
 
     await db.write('proxies');
 
-    // 更新后重新应用到该用户所有活跃邮箱账户
-    const userAccounts = db.data.accounts.filter(a => a.userId === req.userId && a.active !== false);
-    let linkedCount = 0;
-    for (const account of userAccounts) {
-      if (!account.useProxy || account.proxyId !== proxy.id) {
-        account.useProxy = true;
-        account.proxyId = proxy.id;
-        account.updatedAt = new Date().toISOString();
-        linkedCount++;
-      }
-    }
-    if (linkedCount > 0) {
-      await db.write('accounts');
-      for (const account of userAccounts) {
-        try { await mailService.restartAccount(account.id); } catch (_) {}
-      }
+    // 重启已使用该代理的活跃账户以使更新生效
+    const affectedAccounts = db.data.accounts.filter(
+      a => a.userId === req.userId && a.active !== false && a.useProxy && a.proxyId === proxy.id
+    );
+    for (const account of affectedAccounts) {
+      try { await mailService.restartAccount(account.id); } catch (_) {}
     }
 
     res.json({ success: true, code: 'PROXY_UPDATED', message: '代理更新成功', data: proxy });

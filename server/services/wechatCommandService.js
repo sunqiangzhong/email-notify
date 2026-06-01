@@ -140,13 +140,20 @@ async function cmdTest(userId) {
 /**
  * 获取 access_token（带缓存）
  */
-let tokenCache = { token: null, expiresAt: 0 };
+let tokenCache = { token: null, expiresAt: 0, corpId: null, appSecret: null };
 
 async function getAccessToken(config) {
-  const { corpId, appSecret, proxyUrl } = config;
+  const corpId = String(config.corpId || '').trim();
+  const appSecret = String(config.appSecret || '').trim();
+  const proxyUrl = config.proxyUrl;
   const baseUrl = proxyUrl || 'https://qyapi.weixin.qq.com';
 
-  if (tokenCache.token && Date.now() < tokenCache.expiresAt) {
+  if (
+    tokenCache.token &&
+    Date.now() < tokenCache.expiresAt &&
+    tokenCache.corpId === corpId &&
+    tokenCache.appSecret === appSecret
+  ) {
     return tokenCache.token;
   }
 
@@ -162,6 +169,8 @@ async function getAccessToken(config) {
   tokenCache = {
     token: res.data.access_token,
     expiresAt: Date.now() + (res.data.expires_in - 300) * 1000, // 提前5分钟刷新
+    corpId,
+    appSecret,
   };
 
   return tokenCache.token;
@@ -205,7 +214,8 @@ async function sendTextMessage(config, content, userId) {
  * - 菜单名称：一级最多 16 字节，子菜单最多 60 字节
  */
 async function createMenus(config) {
-  const { agentId, proxyUrl } = config;
+  const agentId = String(config.agentId || '').trim();
+  const proxyUrl = config.proxyUrl;
   const baseUrl = proxyUrl || 'https://qyapi.weixin.qq.com';
   const accessToken = await getAccessToken(config);
 
@@ -249,7 +259,11 @@ async function createMenus(config) {
   );
 
   if (res.data.errcode !== 0) {
-    console.error(`[WECHAT] 创建菜单失败: ${res.data.errmsg}`);
+    let extraTip = '';
+    if (res.data.errcode === 301021 || String(res.data.errmsg).includes('not allow operate another agent')) {
+      extraTip = ' (温馨提示：创建微信自定义菜单失败！这通常是因为您在配置企业微信通知时，将“应用 Secret (AgentSecret)”误填成了“管理组 Secret / 通讯录 Secret (CorpSecret)”，或者是填写的 AgentId 与该 Secret 所代表的自建应用不匹配，请登录企业微信后台并检查您的“自建应用”详情页)';
+    }
+    console.error(`[WECHAT] 创建菜单失败: ${res.data.errmsg}${extraTip}`);
     return false;
   }
 
