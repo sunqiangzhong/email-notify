@@ -131,7 +131,7 @@ router.post('/env', (req, res, next) => {
               updatedAt: new Date().toISOString(),
             });
           }
-          db.write();
+          db.write('settings');
           console.log('[SYSTEM] API_TOKEN 已同步到数据库');
         } catch (err) {
           console.error('[SYSTEM] API_TOKEN 保存到数据库失败:', err.message);

@@ -190,7 +190,7 @@ async function createNotification(req, res, next) {
     };
 
     db.data.notifications.push(notification);
-    await db.write();
+    await db.write('notifications');
 
     res.status(201).json({ success: true, code: 'NOTIFICATION_CREATED', message: '通知渠道创建成功', data: notification });
   } catch (err) {
@@ -285,7 +285,7 @@ async function updateNotification(req, res, next) {
     if (active !== undefined) notification.active = active;
     notification.updatedAt = new Date().toISOString();
 
-    await db.write();
+    await db.write('notifications');
 
     res.json({ success: true, code: 'NOTIFICATION_UPDATED', message: '通知渠道更新成功', data: notification });
   } catch (err) {
@@ -307,7 +307,7 @@ async function deleteNotification(req, res, next) {
     }
 
     db.data.notifications.splice(index, 1);
-    await db.write();
+    await db.write('notifications');
 
     res.json({ success: true, code: 'NOTIFICATION_DELETED', message: '通知渠道删除成功' });
   } catch (err) {
@@ -376,7 +376,7 @@ async function createFilter(req, res, next) {
     };
 
     db.data.filters.push(filter);
-    await db.write();
+    await db.write('filters');
 
     res.status(201).json({ success: true, code: 'FILTER_CREATED', message: '过滤规则创建成功', data: filter });
   } catch (err) {
@@ -407,7 +407,7 @@ async function updateFilter(req, res, next) {
     if (active !== undefined) filter.active = active;
     filter.updatedAt = new Date().toISOString();
 
-    await db.write();
+    await db.write('filters');
 
     res.json({ success: true, code: 'FILTER_UPDATED', message: '过滤规则更新成功', data: filter });
   } catch (err) {
@@ -429,7 +429,7 @@ async function deleteFilter(req, res, next) {
     }
 
     db.data.filters.splice(index, 1);
-    await db.write();
+    await db.write('filters');
 
     res.json({ success: true, code: 'FILTER_DELETED', message: '过滤规则删除成功' });
   } catch (err) {

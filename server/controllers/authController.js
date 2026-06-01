@@ -183,7 +183,7 @@ async function changePassword(req, res, next) {
     }
 
     user.password = await bcrypt.hash(newPassword, 10);
-    await db.write();
+    await db.write('users');
 
     res.json({ message: '密码修改成功' });
   } catch (err) {

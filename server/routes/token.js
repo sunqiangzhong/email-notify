@@ -356,7 +356,7 @@ router.post('/', express.text({ type: ['text/xml', 'application/xml'] }), async 
       forwardStatus: 'sending',
       snippet: emailData.snippet,
     });
-    await db.write();
+    await db.write('emailLogs');
     await processNotification(user.id, emailData, logId);
 
     res.json({ status: 'OK' });

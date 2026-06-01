@@ -55,7 +55,7 @@ async function createAccount(req, res, next) {
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
     db.data.accounts.push(account);
-    await db.write();
+    await db.write('accounts');
     if (account.active) mailService.restartAccount(account.id);
     const { password: _, ...safeAccount } = account;
     res.status(201).json({ success: true, code: 'EMAIL_CREATED', message: '邮箱创建成功', data: safeAccount });
@@ -79,7 +79,7 @@ async function updateAccount(req, res, next) {
     if (proxyId !== undefined) account.proxyId = proxyId;
     if (active !== undefined) account.active = active;
     account.updatedAt = new Date().toISOString();
-    await db.write();
+    await db.write('accounts');
     if (account.active) await mailService.restartAccount(account.id);
     const { password: _, ...safeAccount } = account;
     res.json({ success: true, code: 'EMAIL_UPDATED', message: '邮箱更新成功', data: safeAccount });
@@ -92,7 +92,7 @@ async function deleteAccount(req, res, next) {
     const index = db.data.accounts.findIndex(a => a.id === req.params.id && a.userId === req.userId);
     if (index === -1) return res.status(404).json({ success: false, code: 'EMAIL_NOT_FOUND', message: '邮箱不存在' });
     db.data.accounts.splice(index, 1);
-    await db.write();
+    await db.write('accounts');
     res.json({ success: true, code: 'EMAIL_DELETED', message: '邮箱删除成功' });
   } catch (err) { next(err); }
 }

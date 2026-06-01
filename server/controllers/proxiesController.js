@@ -68,7 +68,7 @@ async function createProxy(req, res, next) {
       db.data.proxies.push(proxy);
     }
 
-    await db.write();
+    await db.write('proxies');
 
     // 自动把代理应用到该用户的所有活跃邮箱账户
     const userAccounts = db.data.accounts.filter(a => a.userId === req.userId && a.active !== false);
@@ -82,7 +82,7 @@ async function createProxy(req, res, next) {
       }
     }
     if (linkedCount > 0) {
-      await db.write();
+      await db.write('accounts');
       // 重启已更新的账户以使代理生效
       for (const account of userAccounts) {
         try { await mailService.restartAccount(account.id); } catch (_) {}
@@ -117,7 +117,7 @@ async function updateProxy(req, res, next) {
     if (password !== undefined) proxy.password = password;
     proxy.updatedAt = new Date().toISOString();
 
-    await db.write();
+    await db.write('proxies');
 
     // 更新后重新应用到该用户所有活跃邮箱账户
     const userAccounts = db.data.accounts.filter(a => a.userId === req.userId && a.active !== false);
@@ -131,7 +131,7 @@ async function updateProxy(req, res, next) {
       }
     }
     if (linkedCount > 0) {
-      await db.write();
+      await db.write('accounts');
       for (const account of userAccounts) {
         try { await mailService.restartAccount(account.id); } catch (_) {}
       }
@@ -163,7 +163,7 @@ async function deleteProxy(req, res, next) {
       account.updatedAt = new Date().toISOString();
     }
 
-    await db.write();
+    await db.write('proxies', 'accounts');
 
     // 重启受影响的账户（切换到直连模式）
     for (const account of affectedAccounts) {

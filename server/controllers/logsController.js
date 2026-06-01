@@ -79,7 +79,7 @@ async function deleteLog(req, res, next) {
     }
 
     db.data.emailLogs.splice(index, 1);
-    await db.write();
+    await db.write('emailLogs');
 
     res.json({ message: '日志已删除' });
   } catch (err) {
@@ -95,7 +95,7 @@ async function clearLogs(req, res, next) {
   try {
     const db = getDB();
     db.data.emailLogs = db.data.emailLogs.filter(l => l.userId !== req.userId);
-    await db.write();
+    await db.write('emailLogs');
 
     res.json({ message: '所有日志已清空' });
   } catch (err) {

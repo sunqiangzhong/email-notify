@@ -47,7 +47,7 @@ async function getUserStats(req, res, next) {
     const accounts = db.data.accounts.filter(a => a.userId === userId);
     const logs = db.data.emailLogs.filter(l => l.userId === userId);
     const proxy = db.data.proxies.find(p => p.userId === userId);
-    const wechat = db.data.wechatConfigs.find(w => w.userId === userId);
+    const wechat = db.data.notifications.find(n => n.userId === userId && n.type === 'wecom_app');
 
     res.json({
       user: {
@@ -98,7 +98,7 @@ async function toggleUserStatus(req, res, next) {
 
     user.disabled = !user.disabled;
     user.status = user.disabled ? 'suspended' : 'active';
-    await db.write();
+    await db.write('users');
 
     res.json({
       id: user.id,
@@ -139,10 +139,10 @@ async function deleteUser(req, res, next) {
     db.data.users = db.data.users.filter(u => u.id !== userId);
     db.data.accounts = db.data.accounts.filter(a => a.userId !== userId);
     db.data.proxies = db.data.proxies.filter(p => p.userId !== userId);
-    db.data.wechatConfigs = db.data.wechatConfigs.filter(w => w.userId !== userId);
+    db.data.notifications = db.data.notifications.filter(n => n.userId !== userId);
     db.data.emailLogs = db.data.emailLogs.filter(l => l.userId !== userId);
 
-    await db.write();
+    await db.write('users', 'accounts', 'proxies', 'notifications', 'emailLogs');
 
     res.json({ message: `用户 ${user.name} 及其所有数据已删除` });
   } catch (err) {
@@ -185,7 +185,7 @@ async function createUser(req, res, next) {
     };
 
     db.data.users.push(newUser);
-    await db.write();
+    await db.write('users');
 
     const { password: _, ...safeUser } = newUser;
     res.status(201).json(safeUser);

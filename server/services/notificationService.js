@@ -402,7 +402,7 @@ function updateLogStatus(logId, status, target, error) {
     log.forwardStatus = status;
     if (target) log.forwardTarget = target;
     if (error) log.errorDetails = error;
-    db.write().catch(err => console.error('[DB] Failed to update log status:', err));
+    db.write('emailLogs').catch(err => console.error('[DB] Failed to update log status:', err));
   }
 }
 

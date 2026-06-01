@@ -269,7 +269,17 @@ async function initDB() {
   }
 
   // Build the db object that getDB() returns — same shape as lowdb
-  db = { data, write: () => flushToMySQL(data, dirty) };
+  db = {
+    data,
+    write: (...tableNames) => {
+      for (const table of tableNames) {
+        if (table && TABLES.includes(table)) {
+          dirty.add(table);
+        }
+      }
+      return flushToMySQL(data, dirty);
+    }
+  };
   return db;
 }
 

@@ -203,7 +203,7 @@ async function parseAndCacheEmails(messages, account) {
     }
   }
 
-  await db.write();
+  await db.write('accountEmails');
   return newEmailIds;
 }
 
@@ -262,7 +262,7 @@ async function processNewMessage(msg, account, processedUIDs, emailIdMap) {
     receivedAt: emailData.receivedAt, forwardStatus: 'sending', snippet: emailData.snippet,
   };
   db.data.emailLogs.push(logEntry);
-  await db.write();
+  await db.write('emailLogs');
 
   processNotification(account.userId, emailData, logEntry.id);
 
@@ -329,7 +329,7 @@ async function connectAndIdle(account) {
     if (dbAccount) {
       dbAccount.status = 'online';
       dbAccount.lastSync = new Date().toISOString();
-      await db.write();
+      await db.write('accounts');
     }
 
     // 打开 INBOX
@@ -378,7 +378,7 @@ async function connectAndIdle(account) {
         const dbAcc = db.data.accounts.find(a => a.id === account.id);
         if (dbAcc) {
           dbAcc.lastSync = new Date().toISOString();
-          await db.write();
+          await db.write('accounts');
         }
       } catch (err) {
         console.error('[MAIL-IDLE] Error processing new mail for ' + account.email + ':', err.message);
@@ -392,7 +392,7 @@ async function connectAndIdle(account) {
       const dbAcc = db.data.accounts.find(a => a.id === account.id);
       if (dbAcc) {
         dbAcc.status = 'reconnecting';
-        db.write().catch(() => {});
+        db.write('accounts').catch(() => {});
       }
       scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
     });
@@ -406,7 +406,7 @@ async function connectAndIdle(account) {
       if (dbAcc) {
         dbAcc.status = 'reconnecting';
         dbAcc.lastError = err.message;
-        db.write().catch(() => {});
+        db.write('accounts').catch(() => {});
       }
       scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
     });
@@ -456,7 +456,7 @@ async function connectAndIdle(account) {
         const dbAcc = db.data.accounts.find(a => a.id === account.id);
         if (dbAcc) {
           dbAcc.lastSync = new Date().toISOString();
-          await db.write();
+          await db.write('accounts');
         }
       } catch (pollErr) {
         console.error('[MAIL-IDLE] Safety poll error for ' + account.email + ':', pollErr.message);
@@ -487,7 +487,7 @@ async function connectAndIdle(account) {
     if (dbAccount) {
       dbAccount.status = 'error';
       dbAccount.lastError = errMsg;
-      await db.write();
+      await db.write('accounts');
     }
 
     scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
@@ -727,7 +727,7 @@ async function forceSyncAccount(account) {
       dbAccount.status = 'online';
       dbAccount.lastSync = new Date().toISOString();
       dbAccount.lastError = null;
-      await db.write();
+      await db.write('accounts');
     }
 
     const total = db.data.accountEmails.filter(e => e.accountId === account.id).length;
@@ -739,7 +739,7 @@ async function forceSyncAccount(account) {
     if (dbAccount) {
       dbAccount.status = 'error';
       dbAccount.lastError = err.message;
-      await db.write();
+      await db.write('accounts');
     }
     throw err;
   }
