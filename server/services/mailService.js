@@ -336,12 +336,16 @@ async function connectAndIdle(account) {
     const mailbox = await client.mailboxOpen('INBOX');
     console.log('[MAIL-IDLE] Opened INBOX for ' + account.email + ', messages: ' + mailbox.exists);
 
-    // 初始扫描：获取所有邮件的 envelope
+    // 初始扫描：安全获取最近的 100 封邮件的 envelope，防止大型邮箱卡死，并兼容空邮箱
     console.log('[MAIL-IDLE] ' + account.email + ': Starting initial scan...');
     const initialMessages = [];
-    for await (const message of client.fetch('1:*', { uid: true, envelope: true })) {
-      initialMessages.push(message);
-      processedUIDs.add(message.uid);
+    if (mailbox.exists > 0) {
+      const startSeq = Math.max(1, mailbox.exists - 99);
+      const fetchRange = `${startSeq}:*`;
+      for await (const message of client.fetch(fetchRange, { uid: true, envelope: true })) {
+        initialMessages.push(message);
+        processedUIDs.add(message.uid);
+      }
     }
 
     if (initialMessages.length > 0) {
@@ -358,11 +362,14 @@ async function connectAndIdle(account) {
     client.on('exists', async (data) => {
       console.log('[MAIL-IDLE] ' + account.email + ': New message(s) detected, total: ' + data.count);
       try {
-        // 获取新邮件
+        // 获取新邮件：仅拉取最近的 20 封邮件做差异比对，极速响应，防止大型邮箱超时
         const newMessages = [];
-        for await (const message of client.fetch('1:*', { uid: true, envelope: true })) {
-          if (!processedUIDs.has(message.uid)) {
-            newMessages.push(message);
+        if (data.count > 0) {
+          const fetchRange = `${Math.max(1, data.count - 19)}:*`;
+          for await (const message of client.fetch(fetchRange, { uid: true, envelope: true })) {
+            if (!processedUIDs.has(message.uid)) {
+              newMessages.push(message);
+            }
           }
         }
 
@@ -438,10 +445,15 @@ async function connectAndIdle(account) {
         // 更新活跃时间
         pool.lastActivity = Date.now();
 
+        // 仅拉取最近的 20 封邮件做安全轮询差异比对，防止大型邮箱超时
         const newMessages = [];
-        for await (const message of client.fetch('1:*', { uid: true, envelope: true })) {
-          if (!processedUIDs.has(message.uid)) {
-            newMessages.push(message);
+        const currentCount = client.mailbox ? client.mailbox.exists : 0;
+        if (currentCount > 0) {
+          const fetchRange = `${Math.max(1, currentCount - 19)}:*`;
+          for await (const message of client.fetch(fetchRange, { uid: true, envelope: true })) {
+            if (!processedUIDs.has(message.uid)) {
+              newMessages.push(message);
+            }
           }
         }
 
@@ -693,12 +705,15 @@ async function forceSyncAccount(account) {
     const client = new ImapFlow(imapConfig);
 
     await client.connect();
-    await client.mailboxOpen('INBOX');
+    const mailbox = await client.mailboxOpen('INBOX');
 
-    // 获取所有邮件
+    // 获取最近的 500 封邮件做同步，平衡性能与准确度，防止大型邮箱超时
     const messages = [];
-    for await (const message of client.fetch('1:*', { uid: true, envelope: true })) {
-      messages.push(message);
+    if (mailbox.exists > 0) {
+      const startSeq = Math.max(1, mailbox.exists - 499);
+      for await (const message of client.fetch(`${startSeq}:*`, { uid: true, envelope: true })) {
+        messages.push(message);
+      }
     }
 
     await client.close();
