@@ -12,3 +12,4 @@ services:
     volumes:
       - /vol1/1000/docker/email-notify/mysql:/var/lib/mysql
       - /vol1/1000/docker/email-notify/data:/app/server/data
+      - /var/run/docker.sock:/var/run/docker.sock

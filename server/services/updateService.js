@@ -236,6 +236,13 @@ async function isDockerEnvironment() {
  * 检查是否有 Docker 访问权限
  */
 async function hasDockerAccess() {
+  try {
+    if (fs.existsSync('/var/run/docker.sock')) {
+      fs.accessSync('/var/run/docker.sock', fs.constants.R_OK | fs.constants.W_OK);
+      return true;
+    }
+  } catch (_) {}
+
   // 1. 尝试直接执行 docker info (适用于安装了 docker CLI 且有访问权限的情况)
   try {
     const { exec } = require('child_process');
@@ -244,13 +251,6 @@ async function hasDockerAccess() {
     await execAsync('docker info');
     return true;
   } catch (e) {
-    // 2. 降级检查：即使没有安装 docker CLI，如果挂载了可写 docker.sock，也说明拥有 Docker 访问权限
-    try {
-      if (fs.existsSync('/var/run/docker.sock')) {
-        fs.accessSync('/var/run/docker.sock', fs.constants.W_OK);
-        return true;
-      }
-    } catch (_) {}
   }
   return false;
 }
