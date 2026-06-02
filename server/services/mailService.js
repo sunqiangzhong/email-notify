@@ -208,29 +208,49 @@ async function parseAndCacheEmails(messages, account) {
   return newEmailIds;
 }
 
-async function processNewMessage(msg, account, processedUIDs, emailIdMap) {
+async function processNewMessage(msg, account, processedUIDs, emailIdMap, client) {
   const db = getDB();
   const uid = msg.uid;
   processedUIDs.add(uid);
 
   let emailData;
   try {
-    // 使用 envelope 获取基本信息
-    if (msg.envelope) {
-      const parsed = parseEnvelope(msg.envelope);
-      emailData = {
-        uid,
-        subject: parsed.subject,
-        senderName: parsed.fromName || parsed.fromAddress || 'unknown',
-        senderEmail: parsed.fromAddress || 'unknown',
-        toEmail: account.email,
-        snippet: '',
-        receivedAt: parsed.date,
-      };
+    let messageSource = msg.source;
+
+    // 如果 msg.source 不存在，尝试使用当前连接或建立临时连接拉取 source，从而获取正文
+    if (!messageSource) {
+      if (client && client.usable) {
+        try {
+          const fullMsg = await client.fetchOne(String(uid), { source: true }, { uid: true });
+          if (fullMsg && fullMsg.source) {
+            messageSource = fullMsg.source;
+          }
+        } catch (fetchErr) {
+          console.error('[MAIL] Failed to fetch source for new message ' + uid + ' using active client:', fetchErr.message);
+        }
+      }
+
+      // 如果依然没拿到 source，通过临时连接进行获取
+      if (!messageSource) {
+        try {
+          const proxyConfig = getProxyForAccount(account);
+          const imapConfig = buildImapConfig(account, proxyConfig);
+          const tempClient = new ImapFlow(imapConfig);
+          await tempClient.connect();
+          await tempClient.mailboxOpen('INBOX');
+          const fullMsg = await tempClient.fetchOne(String(uid), { source: true }, { uid: true });
+          if (fullMsg && fullMsg.source) {
+            messageSource = fullMsg.source;
+          }
+          await tempClient.close();
+        } catch (tempErr) {
+          console.error('[MAIL] Failed to fetch source for new message ' + uid + ' using temp client:', tempErr.message);
+        }
+      }
     }
-    // 使用 source 解析完整信息
-    else if (msg.source) {
-      const parsed = await simpleParser(msg.source);
+
+    if (messageSource) {
+      const parsed = await simpleParser(messageSource);
       const from = extractFirstAddress(parsed.from?.value);
       const emailDate = parsed.date instanceof Date && !isNaN(parsed.date.getTime())
         ? parsed.date.toISOString()
@@ -244,6 +264,18 @@ async function processNewMessage(msg, account, processedUIDs, emailIdMap) {
         toEmail: account.email,
         snippet: (parsed.text || '').substring(0, 200).trim(),
         receivedAt: emailDate,
+      };
+    } else if (msg.envelope) {
+      // 无法获取 source 时的最低限度兜底：使用 envelope
+      const parsed = parseEnvelope(msg.envelope);
+      emailData = {
+        uid,
+        subject: parsed.subject,
+        senderName: parsed.fromName || parsed.fromAddress || 'unknown',
+        senderEmail: parsed.fromAddress || 'unknown',
+        toEmail: account.email,
+        snippet: '',
+        receivedAt: parsed.date,
       };
     } else {
       return;
@@ -393,7 +425,7 @@ async function connectAndIdle(account) {
           // 先更新缓存，再发通知
           const emailIdMap = await parseAndCacheEmails(newMessages, account);
           for (const msg of newMessages) {
-            await processNewMessage(msg, account, processedUIDs, emailIdMap);
+            await processNewMessage(msg, account, processedUIDs, emailIdMap, client);
           }
         }
 
@@ -476,7 +508,7 @@ async function connectAndIdle(account) {
           console.log('[MAIL-IDLE] Safety poll found ' + newMessages.length + ' new message(s) for ' + account.email);
           const emailIdMap = await parseAndCacheEmails(newMessages, account);
           for (const msg of newMessages) {
-            await processNewMessage(msg, account, processedUIDs, emailIdMap);
+            await processNewMessage(msg, account, processedUIDs, emailIdMap, client);
           }
         }
 

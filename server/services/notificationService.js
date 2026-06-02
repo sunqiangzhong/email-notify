@@ -46,28 +46,39 @@ function matchesFilter(emailData, filter) {
  * 构建消息内容
  */
 function buildMessageContent(emailData, format = 'markdown') {
+  let formattedTime = '';
+  try {
+    formattedTime = emailData.receivedAt ? new Date(emailData.receivedAt).toLocaleString('zh-CN') : new Date().toLocaleString('zh-CN');
+  } catch (e) {
+    formattedTime = new Date().toLocaleString('zh-CN');
+  }
+
+  const snippet = (emailData.snippet || '').trim() || '（无内容摘要）';
+
   if (format === 'markdown') {
     return [
-      `📬 **新邮件通知**`,
-      ``,
-      `**发件人**: ${emailData.senderName} <${emailData.senderEmail}>`,
-      `**收件箱**: ${emailData.toEmail}`,
-      `**主 题**: ${emailData.subject}`,
-      `**时 间**: ${new Date(emailData.receivedAt).toLocaleString('zh-CN')}`,
-      ``,
-      `---`,
-      `${emailData.snippet}`,
+      `📬 **【新邮件提醒】**`,
+      `━━━━━━━━━━━━━━━━━━━━━`,
+      `👤 **发 件 人**：${emailData.senderName} <${emailData.senderEmail}>`,
+      `📥 **收件账号**：${emailData.toEmail}`,
+      `🏷️ **邮件主题**：**${emailData.subject}**`,
+      `⏰ **收到时间**：${formattedTime}`,
+      `━━━━━━━━━━━━━━━━━━━━━`,
+      `💬 **内容摘要**：`,
+      `> ${snippet}`,
     ].join('\n');
   }
 
   return [
-    `新邮件通知`,
-    `发件人: ${emailData.senderName} <${emailData.senderEmail}>`,
-    `收件箱: ${emailData.toEmail}`,
-    `主题: ${emailData.subject}`,
-    `时间: ${new Date(emailData.receivedAt).toLocaleString('zh-CN')}`,
-    ``,
-    emailData.snippet,
+    `📬【新邮件提醒】`,
+    `━━━━━━━━━━━━━━━━━━━━━`,
+    `👤 发 件 人：${emailData.senderName} <${emailData.senderEmail}>`,
+    `📥 收件账号：${emailData.toEmail}`,
+    `🏷️ 邮件主题：${emailData.subject}`,
+    `⏰ 收到时间：${formattedTime}`,
+    `━━━━━━━━━━━━━━━━━━━━━`,
+    `💬 内容摘要：`,
+    snippet,
   ].join('\n');
 }
 
