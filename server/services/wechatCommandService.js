@@ -287,6 +287,7 @@ async function processMessage(msgType, event, content, fromUser, config) {
   console.log(`[WECHAT] 处理消息: type=${msgType}, event=${event}, content=${content}, from=${fromUser}`);
 
   let command = null;
+  const internalUserId = config?.userId || fromUser;
 
   if (msgType === 'event' && event === 'click') {
     // 菜单点击事件，content 就是 EventKey（命令）
@@ -300,9 +301,9 @@ async function processMessage(msgType, event, content, fromUser, config) {
   }
 
   if (command && COMMANDS[command]) {
-    console.log(`[WECHAT] 执行命令: ${command}`);
+    console.log(`[WECHAT] 执行命令: ${command}, internalUserId=${internalUserId}, from=${fromUser}`);
     try {
-      return await COMMANDS[command].handler(fromUser);
+      return await COMMANDS[command].handler(internalUserId);
     } catch (err) {
       console.error(`[WECHAT] 命令执行失败: ${command}`, err);
       return `❌ 命令执行失败: ${err.message}`;
