@@ -87,8 +87,13 @@ function buildMessageContent(emailData, format = 'markdown') {
  * 发送企业微信应用消息
  */
 async function sendWecomApp(config, emailData, axiosConfig = {}) {
-  const { corpId, agentId, appSecret, proxyUrl } = config;
+  const corpId = String(config.corpId || '').trim();
+  const agentId = String(config.agentId || '').trim();
+  const appSecret = String(config.appSecret || '').trim();
+  const proxyUrl = config.proxyUrl;
   const baseUrl = proxyUrl || 'https://qyapi.weixin.qq.com';
+
+  console.log(`[NOTIFY] Sending WeCom app message: agentId=${agentId}, baseUrl=${baseUrl}`);
 
   // 获取 access_token
   const tokenRes = await axios.get(`${baseUrl}/cgi-bin/gettoken`, {
@@ -102,6 +107,7 @@ async function sendWecomApp(config, emailData, axiosConfig = {}) {
   }
 
   const accessToken = tokenRes.data.access_token;
+  console.log('[NOTIFY] WeCom access_token acquired');
   const content = buildMessageContent(emailData, 'text');
 
   // 发送消息（使用 text 格式，普通微信也能查看）
@@ -119,6 +125,7 @@ async function sendWecomApp(config, emailData, axiosConfig = {}) {
     throw new Error(`发送消息失败: ${sendRes.data.errmsg}`);
   }
 
+  console.log('[NOTIFY] WeCom app message sent successfully');
   return { success: true, target: '企业微信应用' };
 }
 

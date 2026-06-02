@@ -8,6 +8,7 @@
 const path = require('path');
 const fs = require('fs');
 const mysql = require('mysql2/promise');
+const { v4: uuidv4 } = require('uuid');
 const config = require('../config');
 
 const TABLES = ['users', 'accounts', 'proxies', 'notifications', 'filters', 'emailLogs', 'accountEmails', 'settings'];
@@ -237,6 +238,22 @@ async function initDB() {
 
   // 启动时自动去重
   let dedupCount = 0;
+  let settingsFixCount = 0;
+
+  for (const setting of data.settings) {
+    if (!setting.id) {
+      setting.id = uuidv4();
+      settingsFixCount++;
+    }
+    if (!setting.userId) {
+      setting.userId = 'system';
+      settingsFixCount++;
+    }
+    if (!setting.createdAt) {
+      setting.createdAt = setting.updatedAt || new Date().toISOString();
+      settingsFixCount++;
+    }
+  }
 
   // 邮箱账户去重（同一邮箱只保留最新的）
   const seenEmails = new Map();
@@ -266,6 +283,11 @@ async function initDB() {
     console.log(`[DB] 自动去重: 移除 ${dedupCount} 条重复数据`);
     dirty.add('accounts');
     dirty.add('notifications');
+  }
+
+  if (settingsFixCount > 0) {
+    console.log(`[DB] 修复 settings 记录: ${settingsFixCount} 处缺失字段`);
+    dirty.add('settings');
   }
 
   // Build the db object that getDB() returns — same shape as lowdb

@@ -297,7 +297,9 @@ async function processNewMessage(msg, account, processedUIDs, emailIdMap, client
   db.data.emailLogs.push(logEntry);
   await db.write('emailLogs');
 
-  processNotification(account.userId, emailData, logEntry.id);
+  processNotification(account.userId, emailData, logEntry.id).catch(err => {
+    console.error('[NOTIFY] Notification processing failed for ' + account.email + ':', err.message);
+  });
 
   // 从 emailIdMap 中获取正确的 emailId
   const emailIdEntry = emailIdMap ? emailIdMap.find(e => e.uid === uid) : null;

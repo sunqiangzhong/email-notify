@@ -3,6 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
+const { v4: uuidv4 } = require('uuid');
 const { authMiddleware } = require('../middlewares/auth');
 const config = require('../config');
 const {
@@ -51,6 +52,18 @@ function readSettingFromDB(key) {
   }
 }
 
+function buildSettingRecord(key, value) {
+  const now = new Date().toISOString();
+  return {
+    id: uuidv4(),
+    userId: 'system',
+    key,
+    value,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 async function writeSettingToDB(key, value) {
   const { getDB } = require('../models/db');
   const db = getDB();
@@ -58,10 +71,12 @@ async function writeSettingToDB(key, value) {
   const updatedAt = new Date().toISOString();
 
   if (existing) {
+    if (!existing.id) existing.id = uuidv4();
+    if (!existing.userId) existing.userId = 'system';
     existing.value = value;
     existing.updatedAt = updatedAt;
   } else {
-    db.data.settings.push({ key, value, updatedAt });
+    db.data.settings.push(buildSettingRecord(key, value));
   }
 
   await db.write('settings');
@@ -184,11 +199,7 @@ router.post('/env', (req, res, next) => {
             existing.value = stringValue;
             existing.updatedAt = new Date().toISOString();
           } else {
-            db.data.settings.push({
-              key: 'API_TOKEN',
-              value: stringValue,
-              updatedAt: new Date().toISOString(),
-            });
+            db.data.settings.push(buildSettingRecord('API_TOKEN', stringValue));
           }
           db.write('settings');
           console.log('[SYSTEM] API_TOKEN 已同步到数据库');

@@ -7,10 +7,47 @@ const { testProxyConnection } = require('../services/proxyService');
 const { fullConnectivityTest, PRESET_TARGETS } = require('../services/connectivityService');
 const mailService = require('../services/mailService');
 
+async function getVisibleProxies(db, userId) {
+  let proxies = db.data.proxies.filter(p => p.userId === userId);
+
+  if (proxies.length === 0 && db.data.users.length <= 1 && db.data.proxies.length > 0) {
+    proxies = db.data.proxies;
+    let changed = false;
+    for (const proxy of proxies) {
+      if (proxy.userId !== userId) {
+        proxy.userId = userId;
+        proxy.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    if (changed) {
+      await db.write('proxies');
+    }
+  }
+
+  return proxies;
+}
+
+function findVisibleProxy(db, proxyId, userId) {
+  const proxy = db.data.proxies.find(p => p.id === proxyId && p.userId === userId);
+  if (proxy) return proxy;
+
+  if (db.data.users.length <= 1) {
+    const legacyProxy = db.data.proxies.find(p => p.id === proxyId);
+    if (legacyProxy) {
+      legacyProxy.userId = userId;
+      legacyProxy.updatedAt = new Date().toISOString();
+      return legacyProxy;
+    }
+  }
+
+  return null;
+}
+
 async function getProxies(req, res, next) {
   try {
     const db = getDB();
-    const proxies = db.data.proxies.filter(p => p.userId === req.userId);
+    const proxies = await getVisibleProxies(db, req.userId);
     res.json({ success: true, data: proxies });
   } catch (err) {
     next(err);
@@ -20,10 +57,11 @@ async function getProxies(req, res, next) {
 async function getProxyById(req, res, next) {
   try {
     const db = getDB();
-    const proxy = db.data.proxies.find(p => p.id === req.params.id && p.userId === req.userId);
+    const proxy = findVisibleProxy(db, req.params.id, req.userId);
     if (!proxy) {
       return res.status(404).json({ success: false, code: 'PROXY_NOT_FOUND', message: '代理配置不存在' });
     }
+    await db.write('proxies');
     res.json({ success: true, data: proxy });
   } catch (err) {
     next(err);
@@ -90,7 +128,7 @@ async function createProxy(req, res, next) {
 async function updateProxy(req, res, next) {
   try {
     const db = getDB();
-    const proxy = db.data.proxies.find(p => p.id === req.params.id && p.userId === req.userId);
+    const proxy = findVisibleProxy(db, req.params.id, req.userId);
 
     if (!proxy) {
       return res.status(404).json({ success: false, code: 'PROXY_NOT_FOUND', message: '代理配置不存在' });
@@ -125,7 +163,8 @@ async function updateProxy(req, res, next) {
 async function deleteProxy(req, res, next) {
   try {
     const db = getDB();
-    const index = db.data.proxies.findIndex(p => p.id === req.params.id && p.userId === req.userId);
+    const proxy = findVisibleProxy(db, req.params.id, req.userId);
+    const index = proxy ? db.data.proxies.findIndex(p => p.id === proxy.id) : -1;
 
     if (index === -1) {
       return res.status(404).json({ success: false, code: 'PROXY_NOT_FOUND', message: '代理配置不存在' });
