@@ -1,28 +1,28 @@
 ﻿{
-    "name":  "email-notify-server",
-    "version":  "1.0.10",
-    "description":  "澶氶偖绠辫仛鍚堜笌寰俊閫氱煡绠＄悊绯荤粺 - 鍚庣鏈嶅姟",
-    "main":  "server.js",
-    "scripts":  {
-                    "start":  "node server.js",
-                    "dev":  "node --watch server.js"
-                },
-    "dependencies":  {
-                         "express":  "^4.21.2",
-                         "cors":  "^2.8.5",
-                         "dotenv":  "^16.4.7",
-                         "jsonwebtoken":  "^9.0.2",
-                         "bcryptjs":  "^2.4.3",
-                         "mysql2":  "^3.11.0",
-                         "imapflow":  "^1.0.160",
-                         "mailparser":  "^3.7.1",
-                         "socks-proxy-agent":  "^8.0.5",
-                         "https-proxy-agent":  "^7.0.6",
-                         "axios":  "^1.7.9",
-                         "uuid":  "^11.0.5",
-                         "tcp-ping":  "^0.1.1"
-                     },
-    "engines":  {
-                    "node":  "\u003e=18.0.0"
-                }
+  "name": "email-notify-server",
+  "version": "1.0.1",
+  "description": "多聚合邮件通知系统的后端服务器",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "mysql2": "^3.11.0",
+    "imapflow": "^1.0.160",
+    "mailparser": "^3.7.1",
+    "socks-proxy-agent": "^8.0.5",
+    "https-proxy-agent": "^7.0.6",
+    "axios": "^1.7.9",
+    "uuid": "^11.0.5",
+    "tcp-ping": "^0.1.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }
