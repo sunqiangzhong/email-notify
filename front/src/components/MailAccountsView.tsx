@@ -48,6 +48,20 @@ export default function MailAccountsView({
     attachmentsCount: number;
   }>>([]);
   const [loadingEmails, setLoadingEmails] = useState(false);
+
+  // 组件初始化时加载代理列表
+  useEffect(() => {
+    const loadProxies = async () => {
+      try {
+        const { proxyApi } = await import('../services/api');
+        const res = await proxyApi.getAll();
+        if (res.success) setProxyList(res.data);
+      } catch (e) {
+        console.error('Failed to load proxies:', e);
+      }
+    };
+    loadProxies();
+  }, []);
   const [emailPagination, setEmailPagination] = useState({ page: 1, pageSize: 10, total: 0, totalPages: 0 });
   // 展开正文状态
   const [expandedUid, setExpandedUid] = useState<number | null>(null);

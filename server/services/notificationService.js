@@ -14,6 +14,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { getDB } = require('../models/db');
 const { createProxyAgent } = require('./proxyService');
+const config = require('../config');
 
 /**
  * 检查邮件是否匹配过滤规则
@@ -92,7 +93,7 @@ async function sendWecomApp(config, emailData, axiosConfig = {}) {
   // 获取 access_token
   const tokenRes = await axios.get(`${baseUrl}/cgi-bin/gettoken`, {
     params: { corpid: corpId, corpsecret: appSecret },
-    timeout: 10000,
+    timeout: config.notificationTimeout || 15000,
     ...axiosConfig,
   });
 
@@ -110,7 +111,7 @@ async function sendWecomApp(config, emailData, axiosConfig = {}) {
     agentid: parseInt(agentId),
     text: { content },
   }, {
-    timeout: 10000,
+    timeout: config.notificationTimeout || 15000,
     ...axiosConfig,
   });
 
@@ -138,7 +139,7 @@ async function sendWecomWebhook(config, emailData, axiosConfig = {}) {
   }
 
   const res = await axios.post(webhookUrl, payload, {
-    timeout: 10000,
+    timeout: config.notificationTimeout || 15000,
     ...axiosConfig,
   });
 
@@ -162,7 +163,7 @@ async function sendServerChan(config, emailData, axiosConfig = {}) {
     desp: content,
     channel: channel || '9',
   }, {
-    timeout: 10000,
+    timeout: config.notificationTimeout || 15000,
     ...axiosConfig,
   });
 
@@ -186,7 +187,7 @@ async function sendTelegram(config, emailData, axiosConfig = {}) {
     text: content,
     parse_mode: 'Markdown',
   }, {
-    timeout: 10000,
+    timeout: config.notificationTimeout || 15000,
     ...axiosConfig,
   });
 
@@ -219,7 +220,7 @@ async function sendDingtalk(config, emailData, axiosConfig = {}) {
       text: content,
     },
   }, {
-    timeout: 10000,
+    timeout: config.notificationTimeout || 15000,
     ...axiosConfig,
   });
 

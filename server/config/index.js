@@ -14,6 +14,7 @@ module.exports = {
   corsOrigins: (process.env.CORS_ORIGINS || '*').split(',').map(s => s.trim()),
   proxyTestTimeout: parseInt(process.env.PROXY_TEST_TIMEOUT || '10000', 10),
   imapConnectTimeout: parseInt(process.env.IMAP_CONNECT_TIMEOUT || '30000', 10),
+  notificationTimeout: parseInt(process.env.NOTIFICATION_TIMEOUT || '15000', 10),
 
   // API 令牌（用于外部访问）
   apiToken: process.env.API_TOKEN || '',

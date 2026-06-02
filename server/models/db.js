@@ -25,9 +25,9 @@ function getPool() {
     pool = mysql.createPool({
       host: process.env.MYSQL_HOST || '127.0.0.1',
       port: parseInt(process.env.MYSQL_PORT || '3306', 10),
-      user: 'root',
-      password: 'mul_email_pass',
-      database: 'mul_email',
+      user: process.env.MYSQL_USER || 'root',
+      password: process.env.MYSQL_PASSWORD || '',
+      database: process.env.MYSQL_DATABASE || 'mul_email',
       waitForConnections: true,
       connectionLimit: 10,
       charset: 'utf8mb4',
