@@ -14,8 +14,12 @@ export ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
 export ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123456}
 export NODE_ENV=${NODE_ENV:-production}
 
-# MySQL 配置（固定密码，避免环境变量问题）
-MYSQL_PASS="mul_email_pass"
+# MySQL 配置（导出给 Node.js 后端使用）
+export MYSQL_HOST=${MYSQL_HOST:-127.0.0.1}
+export MYSQL_PORT=${MYSQL_PORT:-3306}
+export MYSQL_USER=${MYSQL_USER:-root}
+export MYSQL_PASSWORD=${MYSQL_PASSWORD:-mul_email_pass}
+export MYSQL_DATABASE=${MYSQL_DATABASE:-mul_email}
 
 echo "[INIT] 启动时间: $(date)"
 echo "[INIT] 数据目录: $DATA_DIR"
@@ -44,7 +48,7 @@ MYSQL_PID=$!
 # 等待 MySQL 启动
 echo "[MYSQL] 等待 MySQL 就绪..."
 for i in $(seq 1 60); do
-    if mysqladmin ping -h 127.0.0.1 -u root -p"${MYSQL_PASS}" --silent 2>/dev/null; then
+    if mysqladmin ping -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"${MYSQL_PASSWORD}" --silent 2>/dev/null; then
         echo "[MYSQL] ✅ MySQL 已就绪"
         break
     fi
@@ -59,9 +63,9 @@ done
 
 # 验证数据库存在
 echo "[MYSQL] 验证数据库..."
-mysql -u root -p"${MYSQL_PASS}" -h 127.0.0.1 -e "USE mul_email; SHOW TABLES;" 2>/dev/null || {
+mysql -u "$MYSQL_USER" -p"${MYSQL_PASSWORD}" -h "$MYSQL_HOST" -P "$MYSQL_PORT" -e "USE ${MYSQL_DATABASE}; SHOW TABLES;" 2>/dev/null || {
     echo "[MYSQL] 数据库不存在，重新初始化..."
-    mysql -u root -p"${MYSQL_PASS}" -h 127.0.0.1 < /docker-entrypoint-initdb.d/init.sql
+    mysql -u "$MYSQL_USER" -p"${MYSQL_PASSWORD}" -h "$MYSQL_HOST" -P "$MYSQL_PORT" < /docker-entrypoint-initdb.d/init.sql
 }
 
 # ===== 启动后端 =====
