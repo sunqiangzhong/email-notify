@@ -14,6 +14,16 @@ const IMAP_PRESETS = {
   custom: { host: '', port: 993, ssl: true },
 };
 
+function findVisibleProxy(db, proxyId, userId) {
+  if (!proxyId) return null;
+  const proxy = db.data.proxies.find(p => p.id === proxyId && p.userId === userId);
+  if (proxy) return proxy;
+  if (db.data.users.length <= 1) {
+    return db.data.proxies.find(p => p.id === proxyId) || null;
+  }
+  return null;
+}
+
 async function getAccounts(req, res, next) {
   try {
     const db = getDB();
@@ -36,7 +46,8 @@ async function getAccountById(req, res, next) {
 
 async function createAccount(req, res, next) {
   try {
-    const { name, email, password, type, imapHost, imapPort, useSSL, useProxy, proxyId, active } = req.body;
+    const { name, email, authCode, type, imapHost, imapPort, useSSL, useProxy, proxyId, active } = req.body;
+    const password = req.body.password || authCode;
     if (!email || !password) return res.status(400).json({ success: false, code: 'MISSING_FIELDS', message: '邮箱地址和授权码/密码不能为空' });
     const db = getDB();
     // 全局去重：同一邮箱不允许重复添加（跨用户也检查）
@@ -45,12 +56,13 @@ async function createAccount(req, res, next) {
       return res.status(409).json({ success: false, code: 'DUPLICATE', message: `邮箱 ${email} 已存在（账户: ${existing.name || existing.email}），请勿重复添加` });
     }
     const preset = IMAP_PRESETS[type] || IMAP_PRESETS.custom;
+    const selectedProxy = useProxy && proxyId ? findVisibleProxy(db, proxyId, req.userId) : null;
     const account = {
       id: uuidv4(), userId: req.userId, name: name || email.split('@')[0], email, password,
       type: type || 'custom', status: 'connecting',
       imapHost: imapHost || preset.host, imapPort: imapPort || preset.port,
       useSSL: useSSL !== undefined ? useSSL : preset.ssl,
-      useProxy: useProxy || false, proxyId: proxyId || null,
+      useProxy: !!selectedProxy, proxyId: selectedProxy ? selectedProxy.id : null,
       active: active !== false, lastSync: null,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
@@ -67,16 +79,20 @@ async function updateAccount(req, res, next) {
     const db = getDB();
     const account = db.data.accounts.find(a => a.id === req.params.id && a.userId === req.userId);
     if (!account) return res.status(404).json({ success: false, code: 'EMAIL_NOT_FOUND', message: '邮箱不存在' });
-    const { name, email, password, type, imapHost, imapPort, useSSL, useProxy, proxyId, active } = req.body;
+    const { name, email, authCode, type, imapHost, imapPort, useSSL, useProxy, proxyId, active } = req.body;
+    const password = req.body.password || authCode;
     if (name !== undefined) account.name = name;
     if (email !== undefined) account.email = email;
-    if (password !== undefined) account.password = password;
+    if (password) account.password = password;
     if (type !== undefined) account.type = type;
     if (imapHost !== undefined) account.imapHost = imapHost;
     if (imapPort !== undefined) account.imapPort = imapPort;
     if (useSSL !== undefined) account.useSSL = useSSL;
-    if (useProxy !== undefined) account.useProxy = useProxy;
-    if (proxyId !== undefined) account.proxyId = proxyId;
+    if (useProxy !== undefined || proxyId !== undefined) {
+      const selectedProxy = useProxy && proxyId ? findVisibleProxy(db, proxyId, req.userId) : null;
+      account.useProxy = !!selectedProxy;
+      account.proxyId = selectedProxy ? selectedProxy.id : null;
+    }
     if (active !== undefined) account.active = active;
     account.updatedAt = new Date().toISOString();
     await db.write('accounts');
@@ -115,7 +131,7 @@ async function testAccount(req, res, next) {
         const db = getDB();
         const proxyId = req.body.proxyId;
         if (proxyId) {
-          proxyConfig = db.data.proxies.find(p => p.id === proxyId && p.userId === req.userId);
+          proxyConfig = findVisibleProxy(db, proxyId, req.userId);
         } else {
           proxyConfig = db.data.proxies.find(p => p.userId === req.userId);
         }
@@ -133,7 +149,7 @@ async function testExistingAccount(req, res, next) {
     if (!account) return res.status(404).json({ success: false, code: 'EMAIL_NOT_FOUND', message: '邮箱不存在' });
     let proxyConfig = null;
     if (account.useProxy && account.proxyId) {
-      proxyConfig = db.data.proxies.find(p => p.id === account.proxyId && p.userId === req.userId);
+      proxyConfig = findVisibleProxy(db, account.proxyId, req.userId);
     }
     const accountData = {
       email: account.email, password: account.password,

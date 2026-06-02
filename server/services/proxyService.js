@@ -59,6 +59,7 @@ async function testProxyConnection(proxyConfig) {
     const response = await axios.get('https://httpbin.org/ip', {
       httpAgent: agent,
       httpsAgent: agent,
+      proxy: false,
       timeout: config.proxyTestTimeout,
     });
 

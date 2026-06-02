@@ -179,7 +179,8 @@ export default function MailAccountsView({
         imapHost,
         imapPort,
         useSSL: ssl,
-        useProxy: !!selectedProxy,
+        useProxy: useProxy && !!selectedProxyId,
+        proxyId: useProxy && selectedProxyId ? selectedProxyId : null,
         proxyHost: selectedProxy?.host,
         proxyPort: selectedProxy?.port,
         proxyType: selectedProxy?.type,
@@ -199,8 +200,8 @@ export default function MailAccountsView({
         imapHost,
         imapPort,
         useSSL: ssl,
-        useProxy: !!selectedProxy,
-        proxyId: selectedProxy?.id || null,
+        useProxy: useProxy && !!selectedProxyId,
+        proxyId: useProxy && selectedProxyId ? selectedProxyId : null,
         active: true,
       });
 
@@ -291,8 +292,6 @@ export default function MailAccountsView({
     if (!imapHost) { triggerToast('请输入 IMAP 主机地址', 'error'); return; }
 
     setSubmitting(true);
-    const selectedProxy = useProxy && selectedProxyId ? proxyList.find(p => p.id === selectedProxyId) : null;
-
     try {
       const updateData: any = {
         name,
@@ -300,8 +299,8 @@ export default function MailAccountsView({
         imapHost,
         imapPort,
         useSSL: ssl,
-        useProxy: !!selectedProxy,
-        proxyId: selectedProxy?.id || null,
+        useProxy: useProxy && !!selectedProxyId,
+        proxyId: useProxy && selectedProxyId ? selectedProxyId : null,
       };
       // 只在用户填写了新密码时才更新
       if (authCode) updateData.password = authCode;

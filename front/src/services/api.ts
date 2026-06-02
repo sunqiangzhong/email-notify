@@ -162,6 +162,7 @@ export const emailApi = {
     imapPort?: number;
     useSSL?: boolean;
     useProxy?: boolean;
+    proxyId?: string | null;
     proxyHost?: string;
     proxyPort?: number;
     proxyType?: string;

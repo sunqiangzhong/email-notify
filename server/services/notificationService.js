@@ -323,6 +323,7 @@ async function sendByType(type, config, emailData, proxyAgent) {
   const axiosConfig = proxyAgent ? {
     httpAgent: proxyAgent,
     httpsAgent: proxyAgent,
+    proxy: false,
   } : {};
 
   switch (type) {

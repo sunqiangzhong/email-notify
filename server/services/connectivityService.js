@@ -120,6 +120,7 @@ async function checkHttp(host, port, proxyConfig, timeout = DEFAULT_TIMEOUT) {
       if (agent) {
         axiosConfig.httpsAgent = agent;
         axiosConfig.httpAgent = agent;
+        axiosConfig.proxy = false;
       }
     }
 

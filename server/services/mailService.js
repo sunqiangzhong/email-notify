@@ -20,6 +20,10 @@ let backgroundSyncTimer = null;
 
 // 构建 ImapFlow 配置
 function buildImapConfig(account, proxyConfig) {
+  const host = String(account.imapHost || '').toLowerCase();
+  const connectTimeout = host.includes('gmail')
+    ? Math.max(config.imapConnectTimeout || 30000, 60000)
+    : config.imapConnectTimeout || 30000;
   const imapConfig = {
     host: account.imapHost,
     port: account.imapPort || 993,
@@ -32,9 +36,9 @@ function buildImapConfig(account, proxyConfig) {
       rejectUnauthorized: false,
       minVersion: 'TLSv1',
     },
-    connectionTimeout: config.imapConnectTimeout || 30000,
-    greetingTimeout: config.imapConnectTimeout || 30000,
-    socketTimeout: config.imapConnectTimeout || 30000,
+    connectionTimeout: connectTimeout,
+    greetingTimeout: connectTimeout,
+    socketTimeout: connectTimeout,
     logger: false,
     emitLogs: false,
   };
@@ -55,6 +59,8 @@ function buildImapConfig(account, proxyConfig) {
 
     if (proxyUrl) {
       imapConfig.proxy = proxyUrl;
+      const safeProxyUrl = proxyUrl.replace(/:\/\/([^:@]+):([^@]+)@/, '://$1:***@');
+      console.log('[MAIL] IMAP proxy configured for ' + account.email + ': ' + safeProxyUrl);
     }
   }
 
@@ -67,8 +73,13 @@ function getProxyForAccount(account) {
     const proxy = db.data.proxies.find(p => p.id === account.proxyId);
     if (proxy) {
       console.log('[MAIL] Using explicit proxy for ' + account.email + ': ' + proxy.name + ' (' + proxy.type + '://' + proxy.host + ':' + proxy.port + ')');
+    } else {
+      console.warn('[MAIL] Proxy enabled for ' + account.email + ' but proxyId not found: ' + account.proxyId);
     }
     return proxy || null;
+  }
+  if (String(account.imapHost || '').toLowerCase().includes('gmail')) {
+    console.warn('[MAIL] Gmail account ' + account.email + ' is connecting without proxy');
   }
   return null;
 }
@@ -535,12 +546,14 @@ async function connectAndIdle(account) {
     const errMsg = err.message || String(err);
     const isAuth = errMsg.includes('Invalid credentials') || errMsg.includes('AUTHENTICATE') || errMsg.includes('auth') || errMsg.includes('LOGIN');
     const isTimeout = errMsg.includes('timeout') || errMsg.includes('ETIMEDOUT') || errMsg.includes('ECONNREFUSED');
+    const isProxyTlsDisconnect = errMsg.includes('Client network socket disconnected before secure TLS connection was established');
     const isTls = errMsg.includes('SSL') || errMsg.includes('TLS') || errMsg.includes('certificate');
 
     let hint = '';
     if (isAuth) hint = ' → 请检查授权码/密码是否正确';
-    else if (isTimeout) hint = ' → 连接超时，请检查网络或配置代理';
-    else if (isTls) hint = ' → TLS/SSL 错误，请检查 SSL 设置';
+    else if (isTimeout) hint = ' → 连接超时，请检查网络或为该邮箱配置代理';
+    else if (isProxyTlsDisconnect) hint = ' → TLS 握手前连接被断开，请确认该邮箱已选择可用代理';
+    else if (isTls) hint = ' → TLS/SSL 错误，请检查 SSL 设置或代理连通性';
 
     console.error('[MAIL-IDLE] Failed to connect to ' + account.email + ': ' + errMsg + hint);
 
