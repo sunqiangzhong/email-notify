@@ -339,6 +339,31 @@ async function performUpdate() {
       };
     }
 
+    // 拦截无 socket 挂载的 Docker 环境，不强行执行必定会失败的 docker pull
+    const isDocker = await isDockerEnvironment();
+    if (isDocker && !hasSocket) {
+      updateLog.push({ time: new Date().toISOString(), message: '❌ 自动升级失败：当前容器未挂载 /var/run/docker.sock' });
+      updateLog.push({ time: new Date().toISOString(), message: '💡 您可以通过以下三种高可靠性方式进行更新：' });
+      updateLog.push({ time: new Date().toISOString(), message: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' });
+      updateLog.push({ time: new Date().toISOString(), message: '🔹 方式一：挂载 Docker Socket（推荐，支持一键更新）' });
+      updateLog.push({ time: new Date().toISOString(), message: '   在运行或重建容器时，映射宿主机 socket，例如增加以下参数：' });
+      updateLog.push({ time: new Date().toISOString(), message: '   `-v /var/run/docker.sock:/var/run/docker.sock`' });
+      updateLog.push({ time: new Date().toISOString(), message: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' });
+      updateLog.push({ time: new Date().toISOString(), message: '🔹 方式二：使用 Watchtower（宿主机全局自动更新）' });
+      updateLog.push({ time: new Date().toISOString(), message: '   直接在宿主机部署 containrrr/watchtower 容器，它会自动拉取最新镜像并无缝重启重建本系统' });
+      updateLog.push({ time: new Date().toISOString(), message: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' });
+      updateLog.push({ time: new Date().toISOString(), message: '🔹 方式三：手动更新（传统命令）' });
+      updateLog.push({ time: new Date().toISOString(), message: '   在宿主机依次执行以下指令：' });
+      updateLog.push({ time: new Date().toISOString(), message: '   `docker-compose pull && docker-compose up -d`' });
+      updateLog.push({ time: new Date().toISOString(), message: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' });
+
+      return {
+        success: false,
+        message: '当前容器未挂载 /var/run/docker.sock，无法完成一键自我升级。',
+        log: updateLog,
+      };
+    }
+
     // 备用方案：宿主机直部署（如非容器化部署或未挂载 socket 的传统重载方案）
     updateLog.push({ time: new Date().toISOString(), message: '未挂载 /var/run/docker.sock，将采用普通拉取与重载方案（不一定能成功重建容器，推荐挂载 socket）...' });
 

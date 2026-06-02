@@ -41,7 +41,7 @@ router.get('/current', authMiddleware, async (req, res, next) => {
         version,
         isDocker,
         hasDockerAccess,
-        canAutoUpdate: hasDockerAccess,
+        canAutoUpdate: isDocker || hasDockerAccess,
       },
     });
   } catch (err) {
@@ -59,14 +59,14 @@ router.post('/perform', authMiddleware, async (req, res, next) => {
     const isDocker = await updateService.isDockerEnvironment();
     const hasDockerAccess = await updateService.hasDockerAccess();
 
-    if (!hasDockerAccess) {
+    if (!isDocker && !hasDockerAccess) {
       return res.status(400).json({
         success: false,
         message: '当前环境不支持自动更新',
         details: {
           isDocker,
           hasDockerAccess,
-          reason: '没有 Docker 访问权限',
+          reason: '没有 Docker 访问权限且非容器运行环境',
         },
       });
     }
