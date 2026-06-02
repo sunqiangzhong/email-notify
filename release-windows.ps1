@@ -20,7 +20,7 @@ function Invoke-Checked {
         [Parameter(Mandatory = $true)]
         [string]$FilePath,
 
-        [Parameter(ValueFromRemainingArguments = $true)]
+        [Parameter(Mandatory = $true)]
         [string[]]$Arguments
     )
 
@@ -82,31 +82,39 @@ $VersionInfo |
 
 Write-Host ""
 Write-Host "git add . && git commit && git tag && git push"
-Invoke-Checked git add .
+Invoke-Checked git @("add", ".")
 
 & git diff --cached --quiet
 if ($LASTEXITCODE -eq 0) {
     Write-Host "No changes to commit"
 }
 elseif ($LASTEXITCODE -eq 1) {
-    Invoke-Checked git commit -m "release: $VersionTag"
+    Invoke-Checked git @("commit", "-m", "release: $VersionTag")
 }
 else {
     throw "Command failed: git diff --cached --quiet"
 }
 
-Invoke-Checked git tag -f $VersionTag
-Invoke-Checked git push origin main
-Invoke-Checked git push origin -f $VersionTag
+Invoke-Checked git @("tag", "-f", $VersionTag)
+Invoke-Checked git @("push", "origin", "main")
+Invoke-Checked git @("push", "origin", "-f", $VersionTag)
 
 Write-Host ""
 Write-Host "docker buildx build & push"
-Invoke-Checked docker buildx build `
-    --platform linux/amd64 `
-    -t "sunqz/email-notify:$VersionTag" `
-    -t "sunqz/email-notify:latest" `
-    -f Dockerfile `
-    --push .
+Invoke-Checked docker @(
+    "buildx",
+    "build",
+    "--platform",
+    "linux/amd64",
+    "-t",
+    "sunqz/email-notify:$VersionTag",
+    "-t",
+    "sunqz/email-notify:latest",
+    "-f",
+    "Dockerfile",
+    "--push",
+    "."
+)
 
 Write-Host ""
 Write-Host "============================================"

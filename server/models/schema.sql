@@ -110,3 +110,9 @@ CREATE TABLE IF NOT EXISTS `accountEmails` (
   INDEX `idx_accountEmails_userId` (`userId`),
   UNIQUE KEY `uk_accountEmails_account_uid` (`accountId`, `uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `settings` (
+  `key` VARCHAR(100) NOT NULL PRIMARY KEY,
+  `value` TEXT,
+  `updatedAt` VARCHAR(30) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

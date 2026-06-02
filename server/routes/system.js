@@ -16,6 +16,65 @@ const {
 // .env 文件路径
 const ENV_PATH = path.resolve(__dirname, '..', '.env');
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function readEnvConfig() {
+  if (!fs.existsSync(ENV_PATH)) return {};
+  return dotenv.parse(fs.readFileSync(ENV_PATH));
+}
+
+function writeEnvValue(key, value) {
+  if (!fs.existsSync(ENV_PATH)) {
+    fs.writeFileSync(ENV_PATH, '# Email Notify Configuration\n');
+  }
+
+  const envConfig = fs.readFileSync(ENV_PATH, 'utf-8');
+  const keyRegex = new RegExp(`^${escapeRegExp(key)}=.*$`, 'm');
+
+  if (keyRegex.test(envConfig)) {
+    fs.writeFileSync(ENV_PATH, envConfig.replace(keyRegex, `${key}=${value}`));
+  } else {
+    fs.appendFileSync(ENV_PATH, `\n${key}=${value}`);
+  }
+}
+
+function readSettingFromDB(key) {
+  try {
+    const { getDB } = require('../models/db');
+    const db = getDB();
+    const setting = db.data.settings.find(s => s.key === key);
+    return setting ? setting.value || '' : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+async function writeSettingToDB(key, value) {
+  const { getDB } = require('../models/db');
+  const db = getDB();
+  const existing = db.data.settings.find(s => s.key === key);
+  const updatedAt = new Date().toISOString();
+
+  if (existing) {
+    existing.value = value;
+    existing.updatedAt = updatedAt;
+  } else {
+    db.data.settings.push({ key, value, updatedAt });
+  }
+
+  await db.write('settings');
+}
+
+function getSettingValue(key) {
+  const dbValue = readSettingFromDB(key);
+  if (dbValue) return dbValue;
+
+  const envConfig = readEnvConfig();
+  return envConfig[key] || process.env[key] || '';
+}
+
 router.use(authMiddleware);
 
 // ============ 系统状态 ============
@@ -155,18 +214,7 @@ router.post('/env', (req, res, next) => {
 router.get('/setting/:key', (req, res, next) => {
   try {
     const { key } = req.params;
-
-    // 先从 .env 文件读取
-    let value = '';
-    if (fs.existsSync(ENV_PATH)) {
-      const envConfig = dotenv.parse(fs.readFileSync(ENV_PATH));
-      value = envConfig[key] || '';
-    }
-
-    // 如果 .env 没有，从 process.env 读取
-    if (!value) {
-      value = process.env[key] || '';
-    }
+    const value = getSettingValue(key);
 
     res.json({
       success: true,
@@ -181,7 +229,7 @@ router.get('/setting/:key', (req, res, next) => {
  * POST /api/system/setting/:key
  * 更新单个配置项
  */
-router.post('/setting/:key', (req, res, next) => {
+router.post('/setting/:key', async (req, res, next) => {
   try {
     const { key } = req.params;
     const { value } = req.body;
@@ -204,31 +252,16 @@ router.post('/setting/:key', (req, res, next) => {
 
     const stringValue = value === null || value === undefined ? '' : String(value);
 
-    // 确保 .env 文件存在
-    if (!fs.existsSync(ENV_PATH)) {
-      fs.writeFileSync(ENV_PATH, '# Email Notify Configuration\n');
-    }
+    writeEnvValue(key, stringValue);
+    await writeSettingToDB(key, stringValue);
 
-    // 读取并更新 .env 文件
-    const envConfig = fs.readFileSync(ENV_PATH, 'utf-8');
-    const keyRegex = new RegExp(`^${key}=.*$`, 'm');
-
-    if (keyRegex.test(envConfig)) {
-      const updatedConfig = envConfig.replace(keyRegex, `${key}=${stringValue}`);
-      fs.writeFileSync(ENV_PATH, updatedConfig);
-    } else {
-      fs.appendFileSync(ENV_PATH, `\n${key}=${stringValue}`);
-    }
-
-    // 同步更新到 process.env
     process.env[key] = stringValue;
 
-    // 更新 config 对象
     if (key === 'API_TOKEN') {
       config.apiToken = stringValue;
     }
 
-    res.json({
+    return res.json({
       success: true,
       message: `配置项 ${key} 已保存`,
       data: { key, value: stringValue },
