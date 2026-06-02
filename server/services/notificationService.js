@@ -349,12 +349,20 @@ async function sendByType(type, config, emailData, proxyAgent) {
 /**
  * 获取用户的代理 Agent
  */
-function getUserProxyAgent(userId) {
+function getUserProxyAgent(userId, notificationConfig) {
   const db = getDB();
-  const proxy = db.data.proxies.find(p => p.userId === userId);
-  if (proxy) {
-    console.log(`[NOTIFY] Using proxy for notifications: ${proxy.name} (${proxy.type}://${proxy.host}:${proxy.port})`);
-    return createProxyAgent(proxy);
+  
+  // 检查通知配置是否启用了代理
+  const useProxy = notificationConfig?.useProxy || false;
+  
+  if (useProxy) {
+    const proxy = db.data.proxies.find(p => p.userId === userId);
+    if (proxy) {
+      console.log(`[NOTIFY] Using proxy for notifications: ${proxy.name} (${proxy.type}://${proxy.host}:${proxy.port})`);
+      return createProxyAgent(proxy);
+    }
+  } else {
+    console.log(`[NOTIFY] Not using proxy for notifications (disabled in config)`);
   }
   return null;
 }
@@ -387,14 +395,13 @@ async function processNotification(userId, emailData, logId) {
     }
   }
 
-  // 获取用户的代理配置
-  const proxyAgent = getUserProxyAgent(userId);
-
   // 发送到所有活跃的通知渠道
   let lastResult = null;
   for (const notification of notifications) {
     try {
-      const result = await sendByType(notification.type, notification.config, emailData, proxyAgent);
+      // 每个通知渠道单独判断是否使用代理（国内服务如企业微信不需要代理）
+      const channelProxy = getUserProxyAgent(userId, notification.config);
+      const result = await sendByType(notification.type, notification.config, emailData, channelProxy);
       if (result.success) {
         console.log(`[NOTIFY] Notification sent via ${result.target}`);
         lastResult = result;
