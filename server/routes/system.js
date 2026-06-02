@@ -271,4 +271,29 @@ router.post('/setting/:key', async (req, res, next) => {
   }
 });
 
+/**
+ * POST /api/system/restart
+ * 重启邮件服务（停止所有 IMAP 连接，重新读取配置并建立连接）
+ */
+router.post('/restart', async (req, res, next) => {
+  try {
+    const mailService = require('../services/mailService');
+
+    console.log('[SYSTEM] 收到服务重启请求');
+    const result = await mailService.restartService();
+
+    res.json({
+      success: true,
+      message: '服务重启成功',
+      data: result,
+    });
+  } catch (err) {
+    console.error('[SYSTEM] 重启失败:', err.message);
+    res.status(500).json({
+      success: false,
+      message: `重启失败: ${err.message}`,
+    });
+  }
+});
+
 module.exports = router;

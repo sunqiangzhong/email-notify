@@ -514,6 +514,13 @@ export const systemApi = {
       body: JSON.stringify({ value }),
     });
   },
+
+  // 重启邮件服务
+  restartService: async () => {
+    return request<{ success: boolean; message: string; data: { accounts: number; status: string } }>('/system/restart', {
+      method: 'POST',
+    });
+  },
 };
 
 // ============ 连通性测试接口 ============

@@ -807,7 +807,49 @@ async function forceSyncAccount(account) {
   }
 }
 
+/**
+ * 重启所有邮件服务连接
+ * 停止所有现有连接，重新从数据库读取配置，重新建立连接
+ */
+async function restartService() {
+  const { getDB } = require('../models/db');
+
+  console.log('[MAIL-RESTART] 正在重启邮件服务...');
+
+  // 1. 停止所有现有连接
+  await stopAll();
+  console.log('[MAIL-RESTART] 所有连接已断开');
+
+  // 2. 等待一小段时间确保资源释放
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  // 3. 重新从数据库读取最新配置并启动连接
+  const db = getDB();
+  const activeAccounts = db.data.accounts.filter(a => a.active !== false);
+  console.log(`[MAIL-RESTART] 重新启动 ${activeAccounts.length} 个邮箱连接...`);
+  await startAll();
+
+  // 4. 重新注册企业微信自定义菜单（如果有配置）
+  try {
+    const wechatCmd = require('./wechatCommandService');
+    const wechatConfig = db.data.notifications.find(n => n.type === 'wecom_app' && n.active);
+    if (wechatConfig && wechatConfig.config.corpId && wechatConfig.config.appSecret) {
+      await wechatCmd.createMenus(wechatConfig.config);
+      console.log('[MAIL-RESTART] 企业微信菜单已重新注册');
+    }
+  } catch (err) {
+    console.error('[MAIL-RESTART] 企业微信菜单重新注册失败（不影响服务）:', err.message);
+  }
+
+  console.log('[MAIL-RESTART] 服务重启完成');
+  return {
+    accounts: activeAccounts.length,
+    status: 'ok',
+  };
+}
+
 module.exports = {
   startAll, stopAll, testConnection, restartAccount,
   fetchRecent, fetchBody, getPoolStatus, forceSyncAccount, emailEmitter,
+  restartService,
 };

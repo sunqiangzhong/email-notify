@@ -70,6 +70,7 @@ export default function UpdateButton({ triggerToast }: UpdateButtonProps) {
 
     setUpdating(true);
     setUpdateLog([]);
+    setShowPanel(false); // 关闭面板，状态转移到顶部按钮
 
     try {
       const result = await updateApi.perform();
@@ -77,20 +78,40 @@ export default function UpdateButton({ triggerToast }: UpdateButtonProps) {
       if (result.success) {
         setUpdateLog(result.data.log || []);
         triggerToast('更新已执行，容器正在重启...', 'success');
-
-        // 30秒后检查是否重启成功
-        setTimeout(() => {
-          window.location.reload();
-        }, 30000);
       } else {
         setUpdateLog(result.data?.log || []);
         triggerToast(`更新失败: ${result.message}`, 'error');
+        setUpdating(false);
+        return;
       }
     } catch (error: any) {
-      triggerToast(`更新失败: ${error.message || '未知错误'}`, 'error');
-    } finally {
-      setUpdating(false);
+      // 请求中断通常是容器正在重启，说明更新已在执行中，不算失败
+      console.log('[UPDATE] 请求异常（可能是容器重启中）:', error.message);
+      triggerToast('更新指令已发送，容器正在重启中...', 'info');
     }
+
+    // 保持 updating 状态，持续显示进度，直到页面刷新
+    // 定时检测后端是否已恢复
+    let reloadAttempts = 0;
+    const maxReloadAttempts = 30; // 最多等 150 秒
+    const checkInterval = setInterval(async () => {
+      reloadAttempts++;
+      try {
+        const res = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+          clearInterval(checkInterval);
+          triggerToast('服务已重启完成，正在刷新页面...', 'success');
+          setTimeout(() => window.location.reload(), 1500);
+        }
+      } catch (_) {
+        // 后端还没起来，继续等
+      }
+      if (reloadAttempts >= maxReloadAttempts) {
+        clearInterval(checkInterval);
+        setUpdating(false);
+        triggerToast('等待重启超时，请手动刷新页面', 'warning');
+      }
+    }, 5000);
   };
 
   // 有新版本时显示红点
@@ -100,24 +121,31 @@ export default function UpdateButton({ triggerToast }: UpdateButtonProps) {
     <div className="relative">
       {/* 更新按钮 */}
       <button
-        onClick={() => setShowPanel(!showPanel)}
+        onClick={() => {
+          if (!updating) setShowPanel(!showPanel);
+        }}
+        disabled={updating}
         className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-          hasUpdate
+          updating
+            ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-lg shadow-amber-500/25 cursor-not-allowed'
+            : hasUpdate
             ? 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white shadow-lg shadow-blue-500/25'
             : 'border border-[#30363D] bg-[#161B22] text-[#C9D1D9] hover:bg-[#21262d]'
         }`}
       >
-        {checking ? (
+        {updating ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : checking ? (
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
         ) : hasUpdate ? (
           <Download className="w-3.5 h-3.5" />
         ) : (
           <Package className="w-3.5 h-3.5" />
         )}
-        <span>{hasUpdate ? '有更新' : '检查更新'}</span>
+        <span>{updating ? '正在更新...' : hasUpdate ? '有更新' : '检查更新'}</span>
 
-        {/* 红点提示 */}
-        {hasUpdate && (
+        {/* 红点提示（更新中时不显示） */}
+        {hasUpdate && !updating && (
           <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
         )}
       </button>

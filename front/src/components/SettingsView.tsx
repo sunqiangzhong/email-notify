@@ -10,7 +10,9 @@ import {
   Save,
   RefreshCw,
   Shield,
-  Globe
+  Globe,
+  RotateCcw,
+  AlertTriangle
 } from 'lucide-react';
 import { systemApi } from '../services/api';
 
@@ -24,6 +26,8 @@ export default function SettingsView({ triggerToast }: SettingsViewProps) {
   const [saving, setSaving] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [showRestartConfirm, setShowRestartConfirm] = useState(false);
 
   // 加载配置
   useEffect(() => {
@@ -90,6 +94,24 @@ export default function SettingsView({ triggerToast }: SettingsViewProps) {
       triggerToast('已复制', 'success');
     } catch (err) {
       triggerToast('复制失败', 'error');
+    }
+  };
+
+  // 重启服务
+  const handleRestart = async () => {
+    setShowRestartConfirm(false);
+    setRestarting(true);
+    try {
+      const result = await systemApi.restartService();
+      if (result.success) {
+        triggerToast(`服务重启成功，已重新连接 ${result.data?.accounts || 0} 个邮箱`, 'success');
+      } else {
+        triggerToast(`重启失败: ${result.message}`, 'error');
+      }
+    } catch (error: any) {
+      triggerToast(`重启失败: ${error.message || '服务器错误'}`, 'error');
+    } finally {
+      setRestarting(false);
     }
   };
 
@@ -233,6 +255,69 @@ export default function SettingsView({ triggerToast }: SettingsViewProps) {
           </div>
         </div>
       )}
+
+      {/* 服务管理 */}
+      <div className="p-4 rounded-lg border border-[#30363D] bg-[#161B22] space-y-4">
+        <div className="flex items-center gap-2">
+          <RotateCcw className="w-4 h-4 text-blue-400" />
+          <span className="text-sm font-semibold text-[#E6EDF3]">服务管理</span>
+        </div>
+
+        <p className="text-xs text-[#8B949E]">
+          重启邮件监听服务。会断开所有 IMAP 连接，重新读取最新配置并重新建立连接。适用于修改配置后需要生效的场景。
+        </p>
+
+        {/* 确认对话框 */}
+        {showRestartConfirm && (
+          <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/5 space-y-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-xs text-amber-300 font-semibold">确认重启服务？</p>
+                <p className="text-[11px] text-[#8B949E]">
+                  重启期间邮件监听会短暂中断（约 2-3 秒），已缓存的邮件不受影响。
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleRestart}
+                disabled={restarting}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer"
+              >
+                {restarting ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="w-3.5 h-3.5" />
+                )}
+                <span>{restarting ? '重启中...' : '确认重启'}</span>
+              </button>
+              <button
+                onClick={() => setShowRestartConfirm(false)}
+                disabled={restarting}
+                className="px-3 py-1.5 text-xs text-[#8B949E] hover:text-[#C9D1D9] border border-[#30363D] rounded hover:bg-[#21262d] transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!showRestartConfirm && (
+          <button
+            onClick={() => setShowRestartConfirm(true)}
+            disabled={restarting}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-[#21262d] hover:bg-[#30363D] border border-[#30363D] hover:border-[#58A6FF]/50 text-[#C9D1D9] hover:text-[#E6EDF3] text-xs font-medium transition-all disabled:opacity-50 cursor-pointer"
+          >
+            {restarting ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
+            ) : (
+              <RotateCcw className="w-3.5 h-3.5 text-blue-400" />
+            )}
+            <span>{restarting ? '正在重启...' : '重启服务'}</span>
+          </button>
+        )}
+      </div>
     </div>
   );
 }
