@@ -253,7 +253,7 @@ async function sendFeishu(config, emailData, axiosConfig = {}) {
   payload.content = { text: content };
 
   const res = await axios.post(url, payload, {
-    timeout: 10000,
+    timeout: config.notificationTimeout || 15000,
     ...axiosConfig,
   });
 
@@ -286,7 +286,7 @@ async function sendCustomWebhook(config, emailData, axiosConfig = {}) {
   const reqConfig = {
     method: method || 'POST',
     url: webhookUrl,
-    timeout: 10000,
+    timeout: config.notificationTimeout || 15000,
     headers: {
       'Content-Type': 'application/json',
       ...(headers ? JSON.parse(headers) : {}),
