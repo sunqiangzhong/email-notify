@@ -556,10 +556,42 @@ async function connectAndIdle(account) {
 async function startAll() {
   const db = getDB();
   const activeAccounts = db.data.accounts.filter(a => a.active !== false);
+
+  // 分离需要代理和不需要代理的账户
+  const accountsWithProxy = activeAccounts.filter(a => a.useProxy && a.proxyId);
+  const accountsWithoutProxy = activeAccounts.filter(a => !(a.useProxy && a.proxyId));
+
   console.log('[MAIL-IDLE] Starting ' + activeAccounts.length + ' email IDLE connections...');
-  for (const account of activeAccounts) {
-    await connectAndIdle(account);
+  console.log('[MAIL-IDLE] - ' + accountsWithProxy.length + ' accounts with proxy');
+  console.log('[MAIL-IDLE] - ' + accountsWithoutProxy.length + ' accounts without proxy');
+
+  // 等待数据库和代理配置完全加载（1秒延迟）
+  if (accountsWithProxy.length > 0) {
+    console.log('[MAIL-IDLE] Waiting for proxy configurations to load...');
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
+
+  // 优先启动使用代理的账户（Gmail 等海外邮箱）
+  for (const account of accountsWithProxy) {
+    try {
+      console.log('[MAIL-IDLE] Starting proxy account: ' + account.email);
+      await connectAndIdle(account);
+    } catch (err) {
+      console.error('[MAIL-IDLE] Failed to start proxy account ' + account.email + ':', err.message);
+    }
+  }
+
+  // 启动不需要代理的账户
+  for (const account of accountsWithoutProxy) {
+    try {
+      console.log('[MAIL-IDLE] Starting direct account: ' + account.email);
+      await connectAndIdle(account);
+    } catch (err) {
+      console.error('[MAIL-IDLE] Failed to start account ' + account.email + ':', err.message);
+    }
+  }
+
+  console.log('[MAIL-IDLE] All accounts initialized');
 
   // Background sync
   const syncInterval = typeof config.backgroundSyncInterval === 'number' ? config.backgroundSyncInterval : 120000;

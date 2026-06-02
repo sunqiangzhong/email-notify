@@ -65,17 +65,32 @@ async function bootstrap() {
     await initDB();
     console.log('[DB] Database initialized successfully');
 
+    // 等待数据库完全加载配置（包括代理配置）
+    console.log('[DB] Waiting for all configurations to load...');
+    await new Promise(resolve => setTimeout(resolve, 500));
+
     await seedAdmin();
     console.log('[AUTH] Default admin user ready');
 
+    // 验证代理配置已加载
+    const { getDB } = require('./models/db');
+    const db = getDB();
+    const proxies = db.data.proxies || [];
+    console.log('[PROXY] Loaded ' + proxies.length + ' proxy configuration(s)');
+
+    if (proxies.length > 0) {
+      proxies.forEach(p => {
+        console.log('[PROXY] - ' + (p.name || p.type) + ': ' + p.host + ':' + p.port);
+      });
+    }
+
+    // 启动邮件服务（内部会优先处理使用代理的账户）
     await mailService.startAll();
     console.log('[MAIL] Email polling engine started');
 
     // 注册企业微信自定义菜单
     try {
-      const { getDB } = require('./models/db');
       const wechatCmd = require('./services/wechatCommandService');
-      const db = getDB();
       const wechatConfig = db.data.notifications.find(n => n.type === 'wecom_app' && n.active);
       if (wechatConfig && wechatConfig.config.corpId && wechatConfig.config.appSecret) {
         await wechatCmd.createMenus(wechatConfig.config);
@@ -88,6 +103,7 @@ async function bootstrap() {
     app.listen(config.port, '0.0.0.0', () => {
       console.log('[SERVER] Mul-Email Server running on port ' + config.port);
       console.log('[SERVER] Data directory: ' + config.dataDir);
+      console.log('[SERVER] System ready!');
     });
   } catch (err) {
     console.error('[FATAL] Bootstrap failed:', err);
