@@ -526,6 +526,28 @@ export default function WeChatNotificationsView({ triggerToast }: Props) {
                 </button>
               </div>
 
+              {/* 使用代理 */}
+              <div className="flex items-center justify-between p-2.5 bg-[#0D1117] rounded-md border border-[#30363D]">
+                <div>
+                  <span className="text-xs font-semibold text-[#C9D1D9] block">使用代理</span>
+                  <span className="text-[10px] text-slate-500 block">国外服务（如 Telegram）需要代理，国内服务（企业微信/钉钉/飞书）不需要</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingNotification({
+                    ...editingNotification,
+                    config: { ...editingNotification.config, useProxy: !editingNotification.config?.useProxy },
+                  })}
+                  className={`relative inline-flex h-5 w-9 rounded-full cursor-pointer transition-colors ${
+                    editingNotification.config?.useProxy ? 'bg-blue-600' : 'bg-[#1D2128]'
+                  }`}
+                >
+                  <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                    editingNotification.config?.useProxy ? 'translate-x-4' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
+
               {/* 按钮 */}
               <div className="flex justify-end gap-2 pt-2 border-t border-[#30363D]">
                 <button

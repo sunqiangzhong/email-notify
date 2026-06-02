@@ -173,7 +173,11 @@ async function flushToMySQL(data, dirty) {
       continue;
     }
 
-    const columns = Object.keys(rows[0]);
+    // settings 表只有 key, value, updatedAt 三个字段，过滤掉其他字段
+    let columns = Object.keys(rows[0]);
+    if (table === 'settings') {
+      columns = columns.filter(c => ['key', 'value', 'updatedAt'].includes(c));
+    }
     const colList = columns.map(c => '`' + c + '`').join(',');
     const chunkSize = 100;
 
