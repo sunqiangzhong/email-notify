@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const mailService = require('../services/mailService');
+const { getCurrentVersion } = require('../services/updateService');
 const {
   emitter: logEmitter,
   getRecentLogs,
@@ -65,7 +66,7 @@ async function getStatus(req, res, next) {
         activeConnections: Object.keys(mailPool).length,
         connections: mailPool,
       },
-      version: '1.0.0',
+      version: getCurrentVersion(),
     });
   } catch (err) {
     next(err);

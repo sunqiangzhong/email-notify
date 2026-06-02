@@ -16,18 +16,34 @@ const GITHUB_RELEASES_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITH
 const GITHUB_TAGS_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/tags`;
 const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 
-// 版本信息文件路径（构建时生成）
+// 版本信息文件路径（构建时生成，作为 fallback）
 const VERSION_FILE = path.join(__dirname, '..', 'version.json');
+const PACKAGE_JSON = path.join(__dirname, '..', 'package.json');
 
-// 读取当前版本
+// 读取当前版本：优先 package.json（运行时权威源），其次 version.json（构建时快照），最后环境变量
 let currentVersion = '1.0.0';
 try {
-  if (fs.existsSync(VERSION_FILE)) {
+  // 1. 环境变量覆盖（最高优先级）
+  if (process.env.APP_VERSION) {
+    currentVersion = process.env.APP_VERSION;
+    console.log('[UPDATE] 版本来源: 环境变量 APP_VERSION=' + currentVersion);
+  }
+  // 2. package.json（运行时读取，保证与代码一致）
+  else if (fs.existsSync(PACKAGE_JSON)) {
+    const pkg = JSON.parse(fs.readFileSync(PACKAGE_JSON, 'utf-8'));
+    if (pkg.version) {
+      currentVersion = pkg.version;
+      console.log('[UPDATE] 版本来源: package.json=' + currentVersion);
+    }
+  }
+  // 3. version.json（构建时生成的快照）
+  else if (fs.existsSync(VERSION_FILE)) {
     const data = JSON.parse(fs.readFileSync(VERSION_FILE, 'utf-8'));
     currentVersion = data.currentVersion || '1.0.0';
+    console.log('[UPDATE] 版本来源: version.json=' + currentVersion);
   }
 } catch (e) {
-  console.log('[UPDATE] 未找到版本信息文件，使用默认版本');
+  console.log('[UPDATE] 读取版本信息失败，使用默认版本: ' + e.message);
 }
 
 // 缓存最新版本信息
