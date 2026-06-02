@@ -52,11 +52,13 @@ class WXBizMsgCrypt {
     // XMLParse.extract
     const encrypt = this._extractEncrypt(sPostData);
     if (!encrypt) {
+      console.error('[WECHAT] _extractEncrypt 无法在 XML 中找到 Encrypt 字段');
       return [-40002, null]; // ParseXml_Error
     }
     // SHA1.getSHA1
     const signature = this._getSHA1(this.m_sToken, sTimeStamp, sNonce, encrypt);
     if (signature !== sMsgSignature) {
+      console.error(`[WECHAT] 签名不匹配! 期望签名: "${signature}", 收到签名: "${sMsgSignature}"`);
       return [-40001, null]; // ValidateSignature_Error
     }
     // Prpcrypt.decrypt
@@ -64,6 +66,7 @@ class WXBizMsgCrypt {
       const xml_content = this._decrypt(encrypt, this.m_sReceiveId);
       return [0, xml_content];
     } catch (err) {
+      console.error(`[WECHAT] 加密信息解密失败: ${err.message}`, err);
       return [err.code || -40007, null]; // DecryptAES_Error
     }
   }
@@ -72,10 +75,10 @@ class WXBizMsgCrypt {
    * 从 XML 提取 Encrypt 字段 —— 对齐 MoviePilot XMLParse.extract
    */
   _extractEncrypt(xmltext) {
-    let match = xmltext.match(/<Encrypt><!\[CDATA\[(.*?)\]\]><\/Encrypt>/);
-    if (match) return match[1];
-    match = xmltext.match(/<Encrypt>(.*?)<\/Encrypt>/);
-    if (match) return match[1];
+    let match = xmltext.match(/<Encrypt><!\[CDATA\[([\s\S]*?)\]\]><\/Encrypt>/);
+    if (match) return match[1].trim();
+    match = xmltext.match(/<Encrypt>([\s\S]*?)<\/Encrypt>/);
+    if (match) return match[1].trim();
     return null;
   }
 
@@ -120,9 +123,11 @@ class WXBizMsgCrypt {
     const xml_content = content.slice(4, 4 + xml_len).toString('utf8');
     const from_receiveid = content.slice(4 + xml_len).toString('utf8');
 
-    // 校验 corpId
-    if (from_receiveid !== receiveId) {
-      const err = new Error(`CorpId mismatch: expected "${receiveId}", got "${from_receiveid}"`);
+    // 校验 corpId (健壮地移除尾部的 \0 填充及空格)
+    const clean_from_receiveid = from_receiveid.replace(/\0+$/, '').trim();
+    const clean_receiveId = receiveId.replace(/\0+$/, '').trim();
+    if (clean_from_receiveid !== clean_receiveId) {
+      const err = new Error(`CorpId 不匹配: 期望 "${clean_receiveId}", 实际收到 "${clean_from_receiveid}"`);
       err.code = -40005; // ValidateCorpid_Error
       throw err;
     }
@@ -243,7 +248,7 @@ router.get('/', (req, res) => {
  *   body = await request.body()  # 原始 bytes
  *   ret, sMsg = wxcpt.DecryptMsg(sPostData=body, sMsgSignature=..., sTimeStamp=..., sNonce=...)
  */
-router.post('/', express.text({ type: ['text/xml', 'application/xml'] }), async (req, res, next) => {
+router.post('/', express.text({ type: '*/*' }), async (req, res, next) => {
   try {
     const { msg_signature, timestamp, nonce } = req.query;
     const { token } = req.query;
@@ -287,13 +292,13 @@ router.post('/', express.text({ type: ['text/xml', 'application/xml'] }), async 
         return res.status(200).json({ status: 'OK' });
       }
 
-      // 解析 XML (对齐 MoviePilot DomUtils.tag_value)
+      // 解析 XML (对齐 MoviePilot DomUtils.tag_value, 健壮支持跨行与可选的 CDATA 包裹)
       const sMsgStr = Buffer.isBuffer(sMsg) ? sMsg.toString('utf-8') : sMsg;
-      const msgType = (sMsgStr.match(/<MsgType><!\[CDATA\[(.*?)\]\]><\/MsgType>/) || [])[1] || '';
-      const content = (sMsgStr.match(/<Content><!\[CDATA\[(.*?)\]\]><\/Content>/) || [])[1] || '';
-      const fromUser = (sMsgStr.match(/<FromUserName><!\[CDATA\[(.*?)\]\]><\/FromUserName>/) || [])[1] || '';
-      const event = (sMsgStr.match(/<Event><!\[CDATA\[(.*?)\]\]><\/Event>/) || [])[1] || '';
-      const eventKey = (sMsgStr.match(/<EventKey><!\[CDATA\[(.*?)\]\]><\/EventKey>/) || [])[1] || '';
+      const msgType = ((sMsgStr.match(/<MsgType>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/MsgType>/) || [])[1] || '').trim();
+      const content = ((sMsgStr.match(/<Content>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/Content>/) || [])[1] || '').trim();
+      const fromUser = ((sMsgStr.match(/<FromUserName>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/FromUserName>/) || [])[1] || '').trim();
+      const event = ((sMsgStr.match(/<Event>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/Event>/) || [])[1] || '').trim();
+      const eventKey = ((sMsgStr.match(/<EventKey>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/EventKey>/) || [])[1] || '').trim();
 
       console.log(`[WECHAT] 消息: type=${msgType}, event=${event}, from=${fromUser}, content=${content}, eventKey=${eventKey}`);
 
