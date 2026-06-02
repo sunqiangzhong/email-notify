@@ -221,7 +221,7 @@ async function processNewMessage(msg, account, processedUIDs, emailIdMap, client
     if (!messageSource) {
       if (client && client.usable) {
         try {
-          const fullMsg = await client.fetchOne(String(uid), { source: true }, { uid: true });
+          const fullMsg = await client.fetchOne(String(uid), { source: true, uid: true });
           if (fullMsg && fullMsg.source) {
             messageSource = fullMsg.source;
           }
@@ -238,7 +238,7 @@ async function processNewMessage(msg, account, processedUIDs, emailIdMap, client
           const tempClient = new ImapFlow(imapConfig);
           await tempClient.connect();
           await tempClient.mailboxOpen('INBOX');
-          const fullMsg = await tempClient.fetchOne(String(uid), { source: true }, { uid: true });
+          const fullMsg = await tempClient.fetchOne(String(uid), { source: true, uid: true });
           if (fullMsg && fullMsg.source) {
             messageSource = fullMsg.source;
           }

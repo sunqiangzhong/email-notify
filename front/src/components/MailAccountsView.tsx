@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { MailAccount, MailProvider } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { emailApi } from '../services/api';
+import { emailApi, proxyApi } from '../services/api';
 
 interface MailAccountsViewProps {
   accounts: MailAccount[];
@@ -85,6 +85,7 @@ export default function MailAccountsView({
   // 代理相关状态
   const [useProxy, setUseProxy] = useState(false);
   const [proxyList, setProxyList] = useState<Array<{ id: string; name: string; type: string; host: string; port: number }>>([]);
+  const [loadingProxies, setLoadingProxies] = useState(false);
   const [selectedProxyId, setSelectedProxyId] = useState<string>('');
 
   // 编辑模式状态
