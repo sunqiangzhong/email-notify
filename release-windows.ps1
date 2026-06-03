@@ -30,6 +30,33 @@ function Invoke-Checked {
     }
 }
 
+function Invoke-CheckedWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+
+        [int]$Retries = 3,
+        [int]$DelaySeconds = 15
+    )
+
+    for ($Attempt = 1; $Attempt -le $Retries; $Attempt++) {
+        & $FilePath @Arguments
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+
+        if ($Attempt -lt $Retries) {
+            Write-Warning "Command failed, retrying in $DelaySeconds seconds ($Attempt/$Retries): $FilePath $($Arguments -join ' ')"
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    throw "Command failed after $Retries attempts: $FilePath $($Arguments -join ' ')"
+}
+
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $RepoRoot
 
@@ -101,9 +128,11 @@ Invoke-Checked git @("push", "origin", "-f", $VersionTag)
 
 Write-Host ""
 Write-Host "docker buildx build & push"
-Invoke-Checked docker @(
+Invoke-CheckedWithRetry docker @(
     "buildx",
     "build",
+    "--progress",
+    "plain",
     "--platform",
     "linux/amd64",
     "-t",
