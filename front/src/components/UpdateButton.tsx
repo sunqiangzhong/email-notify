@@ -62,11 +62,16 @@ export default function UpdateButton({ triggerToast }: UpdateButtonProps) {
   }, []);
 
   // 执行更新
+  const normalizeVersion = (version?: string) => (version || '').replace(/^v/, '');
+
   const handleUpdate = async () => {
     if (!versionInfo?.canAutoUpdate) {
       triggerToast('当前环境不支持自动更新', 'error');
       return;
     }
+
+    const previousVersion = normalizeVersion(versionInfo.version);
+    const targetVersion = normalizeVersion(updateInfo?.latestVersion);
 
     setUpdating(true);
     setUpdateLog([]);
@@ -93,23 +98,33 @@ export default function UpdateButton({ triggerToast }: UpdateButtonProps) {
     // 保持 updating 状态，持续显示进度，直到页面刷新
     // 定时检测后端是否已恢复
     let reloadAttempts = 0;
-    const maxReloadAttempts = 30; // 最多等 150 秒
+    const maxReloadAttempts = 60; // 最多等待 300 秒
     const checkInterval = setInterval(async () => {
       reloadAttempts++;
       try {
-        const res = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
+        const res = await fetch(`/api/health?t=${Date.now()}`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(3000),
+        });
         if (res.ok) {
-          clearInterval(checkInterval);
-          triggerToast('服务已重启完成，正在刷新页面...', 'success');
-          setTimeout(() => window.location.reload(), 1500);
+          const health = await res.json();
+          const runningVersion = normalizeVersion(health.version);
+          const reachedTarget = targetVersion && runningVersion === targetVersion;
+          const changedVersion = !targetVersion && runningVersion && runningVersion !== previousVersion;
+
+          if (reachedTarget || changedVersion) {
+            clearInterval(checkInterval);
+            triggerToast('服务已升级完成，正在刷新页面...', 'success');
+            setTimeout(() => window.location.reload(), 1500);
+          }
         }
       } catch (_) {
-        // 后端还没起来，继续等
+        // 后端还没起来，继续等待
       }
       if (reloadAttempts >= maxReloadAttempts) {
         clearInterval(checkInterval);
         setUpdating(false);
-        triggerToast('等待重启超时，请手动刷新页面', 'warning');
+        triggerToast('等待升级完成超时，请手动刷新页面', 'warning');
       }
     }, 5000);
   };

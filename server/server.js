@@ -7,6 +7,7 @@ const config = require('./config');
 const { initDB } = require('./models/db');
 const { seedAdmin } = require('./services/seedService');
 const mailService = require('./services/mailService');
+const { getCurrentVersion } = require('./services/updateService');
 const errorHandler = require('./middlewares/errorHandler');
 
 const authRoutes = require('./routes/auth');
@@ -51,7 +52,8 @@ app.use('/api/token', tokenRoutes);
 app.use('/api/update', updateRoutes);
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ status: 'ok', uptime: process.uptime(), version: getCurrentVersion() });
 });
 
 app.use((_req, res) => {
