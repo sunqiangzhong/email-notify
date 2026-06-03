@@ -243,19 +243,23 @@ async function processNewMessage(msg, account, processedUIDs, emailIdMap, client
 
       // 如果依然没拿到 source，通过临时连接进行获取
       if (!messageSource) {
+        let tempClient = null;
         try {
           const proxyConfig = getProxyForAccount(account);
           const imapConfig = buildImapConfig(account, proxyConfig);
-          const tempClient = new ImapFlow(imapConfig);
+          tempClient = new ImapFlow(imapConfig);
           await tempClient.connect();
           await tempClient.mailboxOpen('INBOX');
           const fullMsg = await tempClient.fetchOne(String(uid), { source: true, uid: true });
           if (fullMsg && fullMsg.source) {
             messageSource = fullMsg.source;
           }
-          await tempClient.close();
         } catch (tempErr) {
           console.error('[MAIL] Failed to fetch source for new message ' + uid + ' using temp client:', tempErr.message);
+        } finally {
+          if (tempClient) {
+            try { await tempClient.close(); } catch (_) {}
+          }
         }
       }
     }
@@ -343,7 +347,14 @@ function cleanupPoolEntry(accountId, keepEntry = false) {
   }
 }
 
+function shouldReconnectAccount(accountId) {
+  const db = getDB();
+  const account = db.data.accounts.find(a => a.id === accountId);
+  return !!account && account.active !== false;
+}
+
 function scheduleReconnect(accountId, delay) {
+  if (!shouldReconnectAccount(accountId)) return;
   let pool = connectionPool.get(accountId);
   if (!pool) {
     const db = getDB();
@@ -456,6 +467,7 @@ async function connectAndIdle(account) {
     client.on('close', () => {
       console.log('[MAIL-IDLE] Connection closed for ' + account.email);
       cleanupPoolEntry(account.id, true);
+      if (!shouldReconnectAccount(account.id)) return;
       const dbAcc = db.data.accounts.find(a => a.id === account.id);
       if (dbAcc) {
         dbAcc.status = 'reconnecting';
@@ -469,6 +481,7 @@ async function connectAndIdle(account) {
       console.error('[MAIL-IDLE] Connection error for ' + account.email + ':', err.message);
       // 错误时触发重连
       cleanupPoolEntry(account.id, true);
+      if (!shouldReconnectAccount(account.id)) return;
       const dbAcc = db.data.accounts.find(a => a.id === account.id);
       if (dbAcc) {
         dbAcc.status = 'reconnecting';
@@ -489,6 +502,8 @@ async function connectAndIdle(account) {
 
     // 心跳检测 + Safety poll
     const safetyInterval = config.safetyPollInterval || 120000; // 默认 2 分钟
+    const MAX_PROCESSED_UIDS = 2000; // 防止 Set 无限增长
+
     const safetyTimer = setInterval(async () => {
       try {
         const pool = connectionPool.get(account.id);
@@ -523,6 +538,13 @@ async function connectAndIdle(account) {
           for (const msg of newMessages) {
             await processNewMessage(msg, account, processedUIDs, emailIdMap, client);
           }
+        }
+
+        // 防止 processedUIDs Set 无限增长：保留最近的 N 个 UID
+        if (processedUIDs.size > MAX_PROCESSED_UIDS) {
+          const sorted = [...processedUIDs].sort((a, b) => b - a);
+          processedUIDs.clear();
+          sorted.slice(0, MAX_PROCESSED_UIDS).forEach(uid => processedUIDs.add(uid));
         }
 
         const dbAcc = db.data.accounts.find(a => a.id === account.id);
@@ -569,6 +591,11 @@ async function connectAndIdle(account) {
 }
 
 async function startAll() {
+  if (backgroundSyncTimer) {
+    clearInterval(backgroundSyncTimer);
+    backgroundSyncTimer = null;
+  }
+
   const db = getDB();
   const activeAccounts = db.data.accounts.filter(a => a.active !== false);
 
@@ -646,10 +673,11 @@ async function stopAll() {
 async function testConnection(accountData, proxyConfig) {
   const startTime = Date.now();
   const tlsStatus = accountData.useSSL !== false;
+  let client = null;
 
   try {
     const imapConfig = buildImapConfig(accountData, proxyConfig);
-    const client = new ImapFlow(imapConfig);
+    client = new ImapFlow(imapConfig);
 
     await client.connect();
     const connectTime = Date.now() - startTime;
@@ -658,8 +686,6 @@ async function testConnection(accountData, proxyConfig) {
     const openTime = Date.now() - startTime - connectTime;
 
     const inboxTotal = mailbox.exists || 0;
-
-    await client.close();
 
     const host = (accountData.imapHost || '').toLowerCase();
     let provider = 'custom';
@@ -688,6 +714,10 @@ async function testConnection(accountData, proxyConfig) {
         inbox: { total: 0, unseen: 0 },
       },
     };
+  } finally {
+    if (client) {
+      try { await client.close(); } catch (_) {}
+    }
   }
 }
 
@@ -696,6 +726,10 @@ async function restartAccount(accountId) {
   const db = getDB();
   const account = db.data.accounts.find(a => a.id === accountId);
   if (account && account.active !== false) await connectAndIdle(account);
+}
+
+async function stopAccount(accountId) {
+  cleanupPoolEntry(accountId);
 }
 
 async function fetchRecent(account, page, pageSize) {
@@ -731,10 +765,11 @@ async function fetchRecent(account, page, pageSize) {
 
 async function fetchBody(account, uid) {
   const proxyConfig = getProxyForAccount(account);
+  let client = null;
 
   try {
     const imapConfig = buildImapConfig(account, proxyConfig);
-    const client = new ImapFlow(imapConfig);
+    client = new ImapFlow(imapConfig);
 
     await client.connect();
     await client.mailboxOpen('INBOX');
@@ -744,8 +779,6 @@ async function fetchBody(account, uid) {
     for await (const message of client.fetch({ uid: parseInt(uid) }, { uid: true, source: true })) {
       messages.push(message);
     }
-
-    await client.close();
 
     if (messages.length === 0) throw new Error('邮件不存在');
 
@@ -761,6 +794,10 @@ async function fetchBody(account, uid) {
   } catch (err) {
     console.error('[MAIL] fetchBody error for ' + account.email + ' UID ' + uid + ':', err.message);
     throw err;
+  } finally {
+    if (client) {
+      try { await client.close(); } catch (_) {}
+    }
   }
 }
 
@@ -791,12 +828,13 @@ function getPoolStatus() {
 async function forceSyncAccount(account) {
   const db = getDB();
   const proxyConfig = getProxyForAccount(account);
+  let client = null;
 
   try {
     console.log('[MAIL-SYNC] Force sync started for ' + account.email);
 
     const imapConfig = buildImapConfig(account, proxyConfig);
-    const client = new ImapFlow(imapConfig);
+    client = new ImapFlow(imapConfig);
 
     await client.connect();
     const mailbox = await client.mailboxOpen('INBOX');
@@ -809,8 +847,6 @@ async function forceSyncAccount(account) {
         messages.push(message);
       }
     }
-
-    await client.close();
 
     const existingUIDs = new Set(
       db.data.accountEmails
@@ -851,6 +887,10 @@ async function forceSyncAccount(account) {
       await db.write('accounts');
     }
     throw err;
+  } finally {
+    if (client) {
+      try { await client.close(); } catch (_) {}
+    }
   }
 }
 
@@ -897,6 +937,6 @@ async function restartService() {
 
 module.exports = {
   startAll, stopAll, testConnection, restartAccount,
-  fetchRecent, fetchBody, getPoolStatus, forceSyncAccount, emailEmitter,
+  stopAccount, fetchRecent, fetchBody, getPoolStatus, forceSyncAccount, emailEmitter,
   restartService,
 };

@@ -21,7 +21,7 @@ const MAX_RECENT = 200;
 
 // 日志过滤配置
 // 设置为 true 以过滤掉指定类型和模式的日志推送到前端
-const ENABLE_FILTER = true;
+let ENABLE_FILTER = true;
 
 // 过滤掉的日志类型（type 字段匹配）
 const FILTERED_TYPES = new Set([

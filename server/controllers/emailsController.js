@@ -96,7 +96,11 @@ async function updateAccount(req, res, next) {
     if (active !== undefined) account.active = active;
     account.updatedAt = new Date().toISOString();
     await db.write('accounts');
-    if (account.active) await mailService.restartAccount(account.id);
+    if (account.active) {
+      await mailService.restartAccount(account.id);
+    } else {
+      await mailService.stopAccount(account.id);
+    }
     const { password: _, ...safeAccount } = account;
     res.json({ success: true, code: 'EMAIL_UPDATED', message: '邮箱更新成功', data: safeAccount });
   } catch (err) { next(err); }
@@ -107,6 +111,7 @@ async function deleteAccount(req, res, next) {
     const db = getDB();
     const index = db.data.accounts.findIndex(a => a.id === req.params.id && a.userId === req.userId);
     if (index === -1) return res.status(404).json({ success: false, code: 'EMAIL_NOT_FOUND', message: '邮箱不存在' });
+    await mailService.stopAccount(db.data.accounts[index].id);
     db.data.accounts.splice(index, 1);
     await db.write('accounts');
     res.json({ success: true, code: 'EMAIL_DELETED', message: '邮箱删除成功' });
