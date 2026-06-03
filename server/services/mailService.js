@@ -38,7 +38,7 @@ function buildImapConfig(account, proxyConfig) {
     },
     connectionTimeout: connectTimeout,
     greetingTimeout: connectTimeout,
-    socketTimeout: connectTimeout,
+    socketTimeout: Math.max(connectTimeout, (config.idleReissueInterval || 0) + 30000),
     maxIdleTime: config.idleReissueInterval || undefined,
     logger: false,
     emitLogs: false,
@@ -301,7 +301,7 @@ async function processNewMessage(msg, account, processedUIDs, emailIdMap, client
     return;
   }
 
-  console.log('[MAIL] New email from ' + emailData.senderEmail + ': ' + emailData.subject);
+  console.log('[MAIL-RECEIVE] ' + account.email + ' received UID ' + uid + ' from ' + emailData.senderEmail + ': ' + emailData.subject);
 
   const { v4: uuidv4 } = require('uuid');
   const logEntry = {
@@ -330,11 +330,11 @@ async function processNewMessage(msg, account, processedUIDs, emailIdMap, client
   });
 }
 
-function cleanupPoolEntry(accountId, keepEntry = false) {
+function cleanupPoolEntry(accountId, keepEntry = false, keepReconnect = false) {
   const pool = connectionPool.get(accountId);
   if (!pool) return;
   if (pool.safetyTimer) clearInterval(pool.safetyTimer);
-  if (pool.reconnectTimer) clearTimeout(pool.reconnectTimer);
+  if (pool.reconnectTimer && !keepReconnect) clearTimeout(pool.reconnectTimer);
   if (pool.client) {
     try {
       pool.client.close();
@@ -345,6 +345,7 @@ function cleanupPoolEntry(accountId, keepEntry = false) {
   } else {
     pool.client = null;
     pool.safetyTimer = null;
+    if (!keepReconnect) pool.reconnectTimer = null;
   }
 }
 
@@ -376,7 +377,8 @@ function scheduleReconnect(accountId, delay) {
   console.log('[MAIL] Reconnecting ' + pool.account.email + ' in ' + Math.round(totalDelay / 1000) + 's...');
   pool.status = 'reconnecting';
   pool.reconnectTimer = setTimeout(async () => {
-    cleanupPoolEntry(accountId);
+    pool.reconnectTimer = null;
+    cleanupPoolEntry(accountId, true, true);
     const db = getDB();
     const account = db.data.accounts.find(a => a.id === accountId);
     if (account && account.active !== false) {
@@ -388,7 +390,12 @@ function scheduleReconnect(accountId, delay) {
 async function connectAndIdle(account) {
   const db = getDB();
   const proxyConfig = getProxyForAccount(account);
-  const processedUIDs = new Set();
+  const cachedUIDs = new Set(
+    db.data.accountEmails
+      .filter(e => e.accountId === account.id)
+      .map(e => e.uid)
+  );
+  const processedUIDs = new Set([...cachedUIDs].slice(-2000));
 
   try {
     console.log('[MAIL-IDLE] Connecting to ' + account.email + ' (' + account.imapHost + ')...');
@@ -413,28 +420,40 @@ async function connectAndIdle(account) {
     console.log('[MAIL-IDLE] Opened INBOX for ' + account.email + ', messages: ' + mailbox.exists);
 
     // 初始扫描：安全获取最近的 100 封邮件的 envelope，防止大型邮箱卡死，并兼容空邮箱
-    console.log('[MAIL-IDLE] ' + account.email + ': Starting initial scan...');
+    const initialLimit = cachedUIDs.size > 0 ? 20 : 100;
+    console.log('[MAIL-IDLE] ' + account.email + ': Starting initial sync, limit=' + initialLimit + ', cached=' + cachedUIDs.size);
     const initialMessages = [];
     if (mailbox.exists > 0) {
-      const startSeq = Math.max(1, mailbox.exists - 99);
+      const startSeq = Math.max(1, mailbox.exists - initialLimit + 1);
       const fetchRange = `${startSeq}:*`;
       for await (const message of client.fetch(fetchRange, { uid: true, envelope: true })) {
         initialMessages.push(message);
-        processedUIDs.add(message.uid);
       }
     }
 
     if (initialMessages.length > 0) {
-      console.log('[MAIL-IDLE] ' + account.email + ': Initial scan, ' + initialMessages.length + ' emails');
-      // 清理旧的缓存
+      console.log('[MAIL-IDLE] ' + account.email + ': Initial sync fetched ' + initialMessages.length + ' emails');
       const staleCount = db.data.accountEmails.filter(e => e.accountId === account.id && !e.fromAddress).length;
       if (staleCount > 0) {
         db.data.accountEmails = db.data.accountEmails.filter(e => !(e.accountId === account.id && !e.fromAddress));
       }
-      await parseAndCacheEmails(initialMessages, account);
+      if (cachedUIDs.size === 0) {
+        await parseAndCacheEmails(initialMessages, account);
+        for (const msg of initialMessages) processedUIDs.add(msg.uid);
+      } else {
+        const missedMessages = initialMessages.filter(msg => !cachedUIDs.has(msg.uid));
+        for (const msg of initialMessages) {
+          if (cachedUIDs.has(msg.uid)) processedUIDs.add(msg.uid);
+        }
+        if (missedMessages.length > 0) {
+          console.log('[MAIL-IDLE] ' + account.email + ': Found ' + missedMessages.length + ' missed message(s) during reconnect');
+          const emailIdMap = await parseAndCacheEmails(missedMessages, account);
+          for (const msg of missedMessages) {
+            await processNewMessage(msg, account, processedUIDs, emailIdMap, client);
+          }
+        }
+      }
     }
-
-    // 监听新邮件事件（imapflow 的 'exists' 事件）
     client.on('exists', async (data) => {
       console.log('[MAIL-IDLE] ' + account.email + ': New message(s) detected, total: ' + data.count);
       try {
@@ -471,7 +490,9 @@ async function connectAndIdle(account) {
     // 监听连接关闭
     client.on('close', () => {
       console.log('[MAIL-IDLE] Connection closed for ' + account.email);
-      cleanupPoolEntry(account.id, true);
+      const pool = connectionPool.get(account.id);
+      if (pool && (pool.reconnectTimer || pool.status === 'reconnecting')) return;
+      cleanupPoolEntry(account.id, true, true);
       if (!shouldReconnectAccount(account.id)) return;
       const dbAcc = db.data.accounts.find(a => a.id === account.id);
       if (dbAcc) {
@@ -484,8 +505,10 @@ async function connectAndIdle(account) {
     // 监听错误（触发重连）
     client.on('error', (err) => {
       console.error('[MAIL-IDLE] Connection error for ' + account.email + ':', err.message);
+      const pool = connectionPool.get(account.id);
+      if (pool) pool.status = 'reconnecting';
+      cleanupPoolEntry(account.id, true, true);
       // 错误时触发重连
-      cleanupPoolEntry(account.id, true);
       if (!shouldReconnectAccount(account.id)) return;
       const dbAcc = db.data.accounts.find(a => a.id === account.id);
       if (dbAcc) {
@@ -623,24 +646,19 @@ async function startAll() {
   }
 
   // 优先启动使用代理的账户（Gmail 等海外邮箱）
-  for (const account of accountsWithProxy) {
+  const startAccount = async (account, mode) => {
     try {
-      console.log('[MAIL-IDLE] Starting proxy account: ' + account.email);
+      console.log('[MAIL-IDLE] Starting ' + mode + ' account: ' + account.email);
       await connectAndIdle(account);
     } catch (err) {
-      console.error('[MAIL-IDLE] Failed to start proxy account ' + account.email + ':', err.message);
+      console.error('[MAIL-IDLE] Failed to start ' + mode + ' account ' + account.email + ':', err.message);
     }
-  }
+  };
 
-  // 启动不需要代理的账户
-  for (const account of accountsWithoutProxy) {
-    try {
-      console.log('[MAIL-IDLE] Starting direct account: ' + account.email);
-      await connectAndIdle(account);
-    } catch (err) {
-      console.error('[MAIL-IDLE] Failed to start account ' + account.email + ':', err.message);
-    }
-  }
+  await Promise.all([
+    ...accountsWithProxy.map(account => startAccount(account, 'proxy')),
+    ...accountsWithoutProxy.map(account => startAccount(account, 'direct')),
+  ]);
 
   console.log('[MAIL-IDLE] All accounts initialized');
 

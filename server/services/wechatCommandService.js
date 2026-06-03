@@ -31,6 +31,11 @@ const COMMANDS = {
     category: '系统',
     handler: cmdMails,
   },
+  '/recent': {
+    description: '\u67e5\u770b\u6700\u8fd1\u90ae\u4ef6',
+    category: '\u7cfb\u7edf',
+    handler: cmdRecentMails,
+  },
   '/test': {
     description: '测试通知',
     category: '通知',
@@ -38,6 +43,9 @@ const COMMANDS = {
   },
 };
 
+
+const recentMailSessions = new Map();
+const RECENT_MAIL_PAGE_SIZE = 5;
 // ============ 命令处理函数 ============
 
 async function cmdHelp(userId) {
@@ -101,6 +109,119 @@ async function cmdMails(userId) {
   });
 
   return lines.join('\n');
+}
+
+function getRecentMailSessionKey(userId, fromUser) {
+  return String(userId || 'system') + ':' + String(fromUser || 'wechat');
+}
+
+function getRecentMailLogs(userId) {
+  const db = getDB();
+  return db.data.emailLogs
+    .filter(log => log.userId === userId)
+    .sort((a, b) => new Date(b.receivedAt || 0).getTime() - new Date(a.receivedAt || 0).getTime());
+}
+
+function formatMailTime(value) {
+  if (!value) return '\u672a\u77e5\u65f6\u95f4';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString('zh-CN', { hour12: false });
+}
+
+function formatRecentMailList(userId, fromUser, page) {
+  const logs = getRecentMailLogs(userId);
+  if (logs.length === 0) return '\u6682\u65e0\u6700\u8fd1\u90ae\u4ef6';
+
+  const totalPages = Math.max(1, Math.ceil(logs.length / RECENT_MAIL_PAGE_SIZE));
+  const safePage = Math.min(Math.max(page || 1, 1), totalPages);
+  const start = (safePage - 1) * RECENT_MAIL_PAGE_SIZE;
+  const pageItems = logs.slice(start, start + RECENT_MAIL_PAGE_SIZE);
+
+  recentMailSessions.set(getRecentMailSessionKey(userId, fromUser), {
+    page: safePage,
+    itemIds: pageItems.map(item => item.id),
+    updatedAt: Date.now(),
+  });
+
+  const lines = [
+    '\u6700\u8fd1\u90ae\u4ef6',
+    '\u7b2c ' + safePage + '/' + totalPages + ' \u9875\uff0c\u5171 ' + logs.length + ' \u5c01',
+    '',
+  ];
+
+  pageItems.forEach((mail, index) => {
+    lines.push('No' + (index + 1) + ' ' + (mail.subject || '(no subject)'));
+    lines.push('\u6765\u81ea: ' + (mail.senderName || mail.senderEmail || 'unknown'));
+    lines.push('\u90ae\u7bb1: ' + (mail.toEmail || 'unknown'));
+    lines.push('\u65f6\u95f4: ' + formatMailTime(mail.receivedAt));
+    if (index < pageItems.length - 1) lines.push('');
+  });
+
+  lines.push('');
+  lines.push('\u56de\u590d n \u4e0b\u4e00\u9875\uff0cp \u4e0a\u4e00\u9875\uff0c\u56de\u590d No\u53f7 \u67e5\u770b\u8be6\u60c5\uff0c\u4f8b\u5982 No1 \u6216 1');
+  return lines.join('\n');
+}
+
+function formatRecentMailDetail(userId, fromUser, no) {
+  const session = recentMailSessions.get(getRecentMailSessionKey(userId, fromUser));
+  if (!session || !Array.isArray(session.itemIds)) {
+    return '\u8bf7\u5148\u70b9\u51fb\u201c\u67e5\u770b\u6700\u8fd1\u90ae\u4ef6\u201d\u6216\u53d1\u9001 /recent \u83b7\u53d6\u5217\u8868';
+  }
+
+  const index = no - 1;
+  if (index < 0 || index >= session.itemIds.length) {
+    return 'No' + no + ' \u4e0d\u5728\u5f53\u524d\u9875\uff0c\u8bf7\u8f93\u5165\u5f53\u524d\u9875\u4e2d\u7684 No \u53f7';
+  }
+
+  const db = getDB();
+  const mail = db.data.emailLogs.find(log => log.id === session.itemIds[index] && log.userId === userId);
+  if (!mail) return '\u8be5\u90ae\u4ef6\u8bb0\u5f55\u5df2\u4e0d\u5b58\u5728\uff0c\u8bf7\u91cd\u65b0\u67e5\u770b\u6700\u8fd1\u90ae\u4ef6\u5217\u8868';
+
+  const lines = [
+    '\u90ae\u4ef6\u8be6\u60c5 No' + no,
+    '',
+    '\u4e3b\u9898: ' + (mail.subject || '(no subject)'),
+    '\u53d1\u4ef6\u4eba: ' + (mail.senderName || '') + (mail.senderEmail ? ' <' + mail.senderEmail + '>' : ''),
+    '\u6536\u4ef6\u90ae\u7bb1: ' + (mail.toEmail || 'unknown'),
+    '\u63a5\u6536\u65f6\u95f4: ' + formatMailTime(mail.receivedAt),
+    '\u8f6c\u53d1\u72b6\u6001: ' + (mail.forwardStatus || 'unknown'),
+  ];
+
+  if (mail.forwardTarget) lines.push('\u8f6c\u53d1\u76ee\u6807: ' + mail.forwardTarget);
+  if (mail.errorDetails) lines.push('\u9519\u8bef: ' + mail.errorDetails);
+  if (mail.snippet) {
+    lines.push('');
+    lines.push('\u6458\u8981:');
+    lines.push(mail.snippet);
+  }
+
+  return lines.join('\n');
+}
+
+async function cmdRecentMails(userId, ctx = {}) {
+  return formatRecentMailList(userId, ctx.fromUser, 1);
+}
+
+function handleRecentMailInput(userId, fromUser, content) {
+  const trimmed = String(content || '').trim();
+  const sessionKey = getRecentMailSessionKey(userId, fromUser);
+  const session = recentMailSessions.get(sessionKey);
+  if (!session) return null;
+
+  if (/^n$/i.test(trimmed)) {
+    return formatRecentMailList(userId, fromUser, session.page + 1);
+  }
+  if (/^p$/i.test(trimmed)) {
+    return formatRecentMailList(userId, fromUser, session.page - 1);
+  }
+
+  const noMatch = trimmed.match(/^(?:no\s*)?(\d+)$/i);
+  if (noMatch) {
+    return formatRecentMailDetail(userId, fromUser, parseInt(noMatch[1], 10));
+  }
+
+  return null;
 }
 
 async function cmdTest(userId) {
@@ -303,7 +424,7 @@ async function processMessage(msgType, event, content, fromUser, config) {
   if (command && COMMANDS[command]) {
     console.log(`[WECHAT] 执行命令: ${command}, internalUserId=${internalUserId}, from=${fromUser}`);
     try {
-      return await COMMANDS[command].handler(internalUserId);
+      return await COMMANDS[command].handler(internalUserId, { fromUser, content });
     } catch (err) {
       console.error(`[WECHAT] 命令执行失败: ${command}`, err);
       return `❌ 命令执行失败: ${err.message}`;
@@ -312,6 +433,9 @@ async function processMessage(msgType, event, content, fromUser, config) {
 
   // 非命令文本消息，返回帮助提示
   if (msgType === 'text' && content) {
+    const recentMailReply = handleRecentMailInput(internalUserId, fromUser, content);
+    if (recentMailReply) return recentMailReply;
+
     return `收到消息: "${content}"\n\n发送 /help 查看可用命令`;
   }
 
