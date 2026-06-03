@@ -464,6 +464,9 @@ async function initDB() {
       for (const table of tableNames) {
         if (table && TABLES.includes(table)) {
           dirty.add(table);
+          if (data[table] && data[table]._dirtyRows) {
+            data[table]._dirtyRows.add('*');
+          }
         }
       }
       await flushToMySQL(data, dirty);

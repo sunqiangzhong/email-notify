@@ -39,6 +39,7 @@ function buildImapConfig(account, proxyConfig) {
     connectionTimeout: connectTimeout,
     greetingTimeout: connectTimeout,
     socketTimeout: connectTimeout,
+    maxIdleTime: config.idleReissueInterval || undefined,
     logger: false,
     emitLogs: false,
   };
@@ -362,12 +363,16 @@ function scheduleReconnect(accountId, delay) {
     if (!account) return;
     pool = {
       client: null, safetyTimer: null, reconnectTimer: null, status: 'reconnecting',
-      account, processedUIDs: new Set(),
+      account, processedUIDs: new Set(), reconnectAttempts: 0,
     };
     connectionPool.set(accountId, pool);
   }
+  if (pool.reconnectTimer) return;
   const jitter = Math.floor(Math.random() * 5000);
-  const totalDelay = delay + jitter;
+  const attempts = pool.reconnectAttempts || 0;
+  const backoffDelay = Math.min(delay * Math.pow(2, attempts), 15 * 60 * 1000);
+  pool.reconnectAttempts = attempts + 1;
+  const totalDelay = backoffDelay + jitter;
   console.log('[MAIL] Reconnecting ' + pool.account.email + ' in ' + Math.round(totalDelay / 1000) + 's...');
   pool.status = 'reconnecting';
   pool.reconnectTimer = setTimeout(async () => {
@@ -494,17 +499,19 @@ async function connectAndIdle(account) {
     // 保存到连接池
     connectionPool.set(account.id, {
       client, safetyTimer: null, reconnectTimer: null, status: 'idle',
-      account, processedUIDs, lastActivity: Date.now(),
+      account, processedUIDs, lastActivity: Date.now(), reconnectAttempts: 0,
     });
 
     // 启动 IDLE（imapflow 自动管理）
     console.log('[MAIL-IDLE] ' + account.email + ': IDLE active');
 
     // 心跳检测 + Safety poll
-    const safetyInterval = config.safetyPollInterval || 120000; // 默认 2 分钟
+    const safetyInterval = config.safetyPollInterval || 0;
     const MAX_PROCESSED_UIDS = 2000; // 防止 Set 无限增长
 
-    const safetyTimer = setInterval(async () => {
+    let safetyTimer = null;
+    if (safetyInterval > 0) {
+      safetyTimer = setInterval(async () => {
       try {
         const pool = connectionPool.get(account.id);
         if (!pool || pool.status !== 'idle') return;
@@ -558,9 +565,11 @@ async function connectAndIdle(account) {
         cleanupPoolEntry(account.id, true);
         scheduleReconnect(account.id, config.reconnectBaseDelay || 30000);
       }
-    }, safetyInterval);
+      }, safetyInterval);
+      console.log('[MAIL-IDLE] ' + account.email + ': Safety poll enabled, interval=' + Math.round(safetyInterval / 1000) + 's');
+    }
 
-    // 更新 safetyTimer
+    // Store safetyTimer
     const pool = connectionPool.get(account.id);
     if (pool) pool.safetyTimer = safetyTimer;
 

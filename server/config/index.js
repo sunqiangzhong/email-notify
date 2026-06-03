@@ -20,7 +20,7 @@ module.exports = {
   apiToken: process.env.API_TOKEN || '',
 
   // IMAP IDLE mode config
-  safetyPollInterval: parseInt(process.env.SAFETY_POLL_INTERVAL || '300000', 10),
+  safetyPollInterval: parseInt(process.env.SAFETY_POLL_INTERVAL || '0', 10),
   idleReissueInterval: parseInt(process.env.IDLE_REISSUE_INTERVAL || '1740000', 10),
   reconnectBaseDelay: parseInt(process.env.RECONNECT_BASE_DELAY || '30000', 10),
   backgroundSyncInterval: parseInt(process.env.BACKGROUND_SYNC_INTERVAL || '0', 10),
