@@ -20,6 +20,10 @@ const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/r
 const VERSION_FILE = path.join(__dirname, '..', 'version.json');
 const PACKAGE_JSON = path.join(__dirname, '..', 'package.json');
 
+function readJsonFile(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, ''));
+}
+
 // 读取当前版本：优先 package.json（运行时权威源），其次 version.json（构建时快照），最后环境变量
 let currentVersion = '1.0.0';
 try {
@@ -30,7 +34,7 @@ try {
   }
   // 2. package.json（运行时读取，保证与代码一致）
   else if (fs.existsSync(PACKAGE_JSON)) {
-    const pkg = JSON.parse(fs.readFileSync(PACKAGE_JSON, 'utf-8'));
+    const pkg = readJsonFile(PACKAGE_JSON);
     if (pkg.version) {
       currentVersion = pkg.version;
       console.log('[UPDATE] 版本来源: package.json=' + currentVersion);
@@ -38,7 +42,7 @@ try {
   }
   // 3. version.json（构建时生成的快照）
   else if (fs.existsSync(VERSION_FILE)) {
-    const data = JSON.parse(fs.readFileSync(VERSION_FILE, 'utf-8'));
+    const data = readJsonFile(VERSION_FILE);
     currentVersion = data.currentVersion || '1.0.0';
     console.log('[UPDATE] 版本来源: version.json=' + currentVersion);
   }

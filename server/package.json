@@ -1,6 +1,6 @@
-﻿{
+{
     "name":  "email-notify-server",
-    "version":  "1.2.0",
+    "version":  "1.2.1",
     "description":  "多聚合邮件通知系统的后端服务器",
     "main":  "server.js",
     "scripts":  {

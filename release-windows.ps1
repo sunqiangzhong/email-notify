@@ -65,6 +65,7 @@ Require-Command docker
 
 $PackageJsonPath = Join-Path $RepoRoot "server\package.json"
 $VersionJsonPath = Join-Path $RepoRoot "server\version.json"
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 if (-not (Test-Path $PackageJsonPath)) {
     throw "Cannot find package file: $PackageJsonPath"
@@ -90,9 +91,11 @@ Write-Host ""
 
 Write-Host "Update server/package.json -> $VersionNum"
 $PackageJson.version = $VersionNum
-$PackageJson |
-    ConvertTo-Json -Depth 20 |
-    Set-Content -Path $PackageJsonPath -Encoding UTF8
+[System.IO.File]::WriteAllText(
+    $PackageJsonPath,
+    ($PackageJson | ConvertTo-Json -Depth 20),
+    $Utf8NoBom
+)
 
 Write-Host "Update server/version.json -> $VersionNum"
 $VersionInfo = [ordered]@{
@@ -103,9 +106,11 @@ $VersionInfo = [ordered]@{
     publishedAt    = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 }
 
-$VersionInfo |
-    ConvertTo-Json -Depth 10 |
-    Set-Content -Path $VersionJsonPath -Encoding UTF8
+[System.IO.File]::WriteAllText(
+    $VersionJsonPath,
+    ($VersionInfo | ConvertTo-Json -Depth 10),
+    $Utf8NoBom
+)
 
 Write-Host ""
 Write-Host "git add . && git commit && git tag && git push"
